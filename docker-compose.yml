@@ -1,0 +1,104 @@
+services:
+  # LiteLLM Proxy — LLM API Gateway
+  # Handles model routing, authentication, usage tracking, billing
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: decepticon-litellm
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    env_file: .env
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-decepticon-master}
+      - LITELLM_SALT_KEY=${LITELLM_SALT_KEY:-sk-decepticon-salt}
+      - DATABASE_URL=postgresql://decepticon:decepticon@postgres:5432/litellm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - decepticon-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # PostgreSQL — Persistent storage for LiteLLM
+  # Stores: virtual keys, spend logs, user budgets, rate limits
+  postgres:
+    image: postgres:17-alpine
+    container_name: decepticon-postgres
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: decepticon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-decepticon}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - decepticon-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U decepticon -d litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Evasive Red Team Sandbox
+  # Rootless container for executing tools (nmap, whois, etc.) securely
+  sandbox:
+    build:
+      context: .
+      dockerfile: containers/sandbox.Dockerfile
+    container_name: decepticon-sandbox
+    networks:
+      - decepticon-net
+    # We use standard Docker default capabilities for security,
+    # but add extra network capabilities for red-team tools like nmap.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+      - NET_BIND_SERVICE
+    volumes:
+      - sandbox_data:/workspace
+    restart: unless-stopped
+
+  # ── Victim Infrastructure (demo / testing only) ──────────────────────
+  # DVWA — Damn Vulnerable Web Application
+  # Web vulnerabilities: SQLi, XSS, Command Injection, File Inclusion, CSRF
+  # Default creds: admin / password
+  dvwa:
+    image: vulnerables/web-dvwa
+    container_name: decepticon-dvwa
+    networks:
+      - decepticon-net
+    restart: unless-stopped
+    profiles:
+      - victims
+
+  # Metasploitable 2 — intentionally vulnerable Linux host
+  # Vulnerable services: vsftpd, SSH, Samba, MySQL, distccd, UnrealIRCd, Tomcat
+  # Default creds: msfadmin / msfadmin
+  metasploitable2:
+    image: tleemcjr/metasploitable2
+    container_name: decepticon-msf2
+    networks:
+      - decepticon-net
+    tty: true
+    restart: unless-stopped
+    profiles:
+      - victims
+
+volumes:
+  postgres_data:
+  sandbox_data:
+
+networks:
+  decepticon-net:
+    driver: bridge
