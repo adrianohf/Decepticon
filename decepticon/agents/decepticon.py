@@ -9,9 +9,10 @@ Middleware stack (selected for orchestration):
   2. FilesystemMiddleware — file ops for reading/updating engagement docs
   3. SubAgentMiddleware — task() tool for delegating to sub-agents
   4. TodoListMiddleware — write_todos() for objective tracking
-  5. SummarizationMiddleware — auto-compact for long orchestration sessions
-  6. AnthropicPromptCachingMiddleware — cache system prompt for Anthropic
-  7. PatchToolCallsMiddleware — repair dangling tool calls
+  5. ModelFallbackMiddleware — opus → sonnet fallback on primary failure
+  6. SummarizationMiddleware — auto-compact for long orchestration sessions
+  7. AnthropicPromptCachingMiddleware — cache system prompt for Anthropic
+  8. PatchToolCallsMiddleware — repair dangling tool calls
 
 Sub-agents are passed as CompiledSubAgent, wrapping existing agent factories
 (create_planner_agent, create_recon_agent, create_exploit_agent,
@@ -28,15 +29,14 @@ from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgentMiddleware
 from deepagents.middleware.summarization import create_summarization_middleware
 from langchain.agents import create_agent
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import ModelFallbackMiddleware, TodoListMiddleware
 from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 
 from decepticon.backends import DockerSandbox
 from decepticon.core.config import load_config
 from decepticon.core.subagent_streaming import StreamingRunnable
-from decepticon.core.types import AgentRole
-from decepticon.llm import create_llm
+from decepticon.llm import LLMFactory
 from decepticon.tools.bash import bash
 from decepticon.tools.bash.tool import set_sandbox
 
@@ -57,14 +57,16 @@ def create_decepticon_agent():
       - Explicit middleware stack instead of create_deep_agent() defaults
       - SubAgentMiddleware: task() tool for delegating to specialist sub-agents
       - TodoListMiddleware: write_todos() for objective tracking during orchestration
-      - No BASE_AGENT_PROMPT: decepticon.md is the complete system prompt
+      - ModelFallbackMiddleware: opus primary → sonnet fallback on failure
       - CompositeBackend: /skills/* → host FS (read-only), default → Docker sandbox
 
     Returns a compiled LangGraph agent ready for invocation.
     """
     config = load_config()
 
-    llm = create_llm(AgentRole.DECEPTICON, config)
+    factory = LLMFactory()
+    llm = factory.get_model("decepticon")
+    fallback_models = factory.get_fallback_models("decepticon")
 
     # Build DockerSandbox — shared filesystem for all agents
     sandbox = DockerSandbox(
@@ -83,17 +85,11 @@ def create_decepticon_agent():
     )
 
     # Build sub-agents from existing agent factories
-    # Each sub-agent retains its full middleware stack and skill sets
     from decepticon.agents.exploit import create_exploit_agent
     from decepticon.agents.planner import create_planner_agent
     from decepticon.agents.postexploit import create_postexploit_agent
     from decepticon.agents.recon import create_recon_agent
 
-    # Build sub-agents with StreamingRunnable wrappers.
-    # StreamingRunnable intercepts invoke() → uses stream() internally,
-    # emitting tool calls, results, and AI messages to the CLI renderer
-    # in real time. Without this, task() runs silently and only returns
-    # the final result (deepagents default behavior).
     subagents = [
         CompiledSubAgent(
             name="planner",
@@ -137,17 +133,22 @@ def create_decepticon_agent():
         ),
     ]
 
-    # Assemble middleware stack — orchestrator needs SubAgentMiddleware + TodoListMiddleware
-    # on top of the standard stack used by specialist agents
+    # Assemble middleware stack
     middleware = [
         SkillsMiddleware(backend=backend, sources=["/skills/decepticon/", "/skills/shared/"]),
         FilesystemMiddleware(backend=backend),
         SubAgentMiddleware(subagents=subagents),
         TodoListMiddleware(),
-        create_summarization_middleware(llm, backend),
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-        PatchToolCallsMiddleware(),
     ]
+    if fallback_models:
+        middleware.append(ModelFallbackMiddleware(*fallback_models))
+    middleware.extend(
+        [
+            create_summarization_middleware(llm, backend),
+            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+            PatchToolCallsMiddleware(),
+        ]
+    )
 
     agent = create_agent(
         llm,
@@ -159,7 +160,4 @@ def create_decepticon_agent():
     )
 
     # Orchestrator needs a higher recursion budget than sub-agents (40).
-    # Each delegation cycle = AI think + task() call + result processing.
-    # With todo tracking, skill loading, and multiple delegations, 40 is
-    # easily exhausted. Sub-agents have their own separate recursion budgets.
     return agent.with_config({"recursion_limit": 200})

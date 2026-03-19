@@ -1,8 +1,9 @@
 """Unit tests for decepticon.llm.factory"""
 
+import asyncio
+
 import pytest
 
-from decepticon.core.exceptions import LLMError
 from decepticon.llm.factory import LLMFactory
 from decepticon.llm.models import LLMModelMapping, ProxyConfig
 
@@ -31,22 +32,33 @@ class TestLLMFactory:
 
     def test_get_model_different_roles(self):
         recon = self.factory.get_model("recon")
-        supervisor = self.factory.get_model("supervisor")
-        assert recon is not supervisor
-        assert recon.model_name != supervisor.model_name
+        decepticon = self.factory.get_model("decepticon")
+        assert recon is not decepticon
+        assert recon.model_name != decepticon.model_name
 
     def test_get_model_unknown_role_raises(self):
-        with pytest.raises(LLMError, match="No model assignment"):
+        with pytest.raises(KeyError, match="No model assignment"):
             self.factory.get_model("nonexistent")
 
     def test_router_accessible(self):
         assert self.factory.router is not None
 
+    def test_get_fallback_models_with_fallback(self):
+        models = self.factory.get_fallback_models("recon")
+        assert len(models) == 1
+        assert models[0].model_name == "gpt-4o"
+
+    def test_get_fallback_models_without_fallback(self):
+        # Create a mapping with no fallback for a role
+        mapping = LLMModelMapping()
+        mapping.recon.fallback = None
+        factory = LLMFactory(self.proxy, mapping)
+        models = factory.get_fallback_models("recon")
+        assert len(models) == 0
+
 
 class TestLLMFactoryHealthCheck:
     def test_health_check_returns_false_when_no_proxy(self):
-        import asyncio
-
         proxy = ProxyConfig(url="http://localhost:19999")
         factory = LLMFactory(proxy)
         result = asyncio.run(factory.health_check())

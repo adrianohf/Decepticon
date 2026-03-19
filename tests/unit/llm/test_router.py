@@ -15,8 +15,8 @@ class TestModelRouter:
         model = self.router.resolve("recon")
         assert model == "claude-sonnet-4-20250514"
 
-    def test_resolve_supervisor(self):
-        model = self.router.resolve("supervisor")
+    def test_resolve_decepticon(self):
+        model = self.router.resolve("decepticon")
         assert model == "claude-opus-4-20250514"
 
     def test_resolve_with_fallback_returns_chain(self):
@@ -25,10 +25,11 @@ class TestModelRouter:
         assert chain[0] == "claude-sonnet-4-20250514"
         assert chain[1] == "gpt-4o"
 
-    def test_resolve_without_fallback(self):
+    def test_resolve_with_fallback_strategic(self):
         chain = self.router.resolve_with_fallback("exploit")
-        assert len(chain) == 1
+        assert len(chain) == 2
         assert chain[0] == "claude-opus-4-20250514"
+        assert chain[1] == "claude-sonnet-4-20250514"
 
     def test_resolve_unknown_role_raises(self):
         with pytest.raises(KeyError, match="No model assignment"):

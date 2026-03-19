@@ -32,10 +32,11 @@ class TestModelAssignment:
 class TestLLMModelMapping:
     def test_default_roles_exist(self):
         mapping = LLMModelMapping()
-        assert mapping.supervisor is not None
+        assert mapping.decepticon is not None
         assert mapping.recon is not None
         assert mapping.exploit is not None
-        assert mapping.report is not None
+        assert mapping.planning is not None
+        assert mapping.postexploit is not None
 
     def test_get_assignment_valid(self):
         mapping = LLMModelMapping()
@@ -46,6 +47,16 @@ class TestLLMModelMapping:
         mapping = LLMModelMapping()
         with pytest.raises(KeyError):
             mapping.get_assignment("nonexistent")
+
+    def test_strategic_agents_use_opus(self):
+        mapping = LLMModelMapping()
+        for role in ("decepticon", "planning", "exploit"):
+            assert "opus" in mapping.get_assignment(role).primary
+
+    def test_tactical_agents_use_sonnet(self):
+        mapping = LLMModelMapping()
+        for role in ("recon", "postexploit"):
+            assert "sonnet" in mapping.get_assignment(role).primary
 
 
 class TestProxyConfig:
