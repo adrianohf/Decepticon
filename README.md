@@ -37,6 +37,11 @@
   <img src="https://img.shields.io/badge/Visit%20Website-brightgreen?logo=vercel&logoColor=white&style=for-the-badge" alt="Visit Website">
 </a>
 
+<!-- Docs -->
+<a href="https://purpleailab.mintlify.app">
+  <img src="https://img.shields.io/badge/Docs-Philosophy%20%26%20Vision-8B5CF6?logo=bookstack&logoColor=white&style=for-the-badge" alt="Documentation">
+</a>
+
 </div>
 
 ---
@@ -352,6 +357,12 @@ We welcome contributions! Whether you're adding new skills, improving agents, or
 - **Agents**: Improve agent prompts and middleware stacks
 - **Tools**: Extend sandbox tooling in `containers/sandbox.Dockerfile`
 - **Testing**: Add unit/integration tests
+
+## Philosophy & Vision
+
+For a deeper look at Decepticon's philosophy, design principles, and where we're heading — check our **[documentation site](https://purpleailab.mintlify.app)**.
+
+Topics covered include Vibe Hacking, the autonomous red team paradigm, context engineering for offensive agents, and how AI-driven security testing fits into the broader threat landscape.
 
 ## Community
 
