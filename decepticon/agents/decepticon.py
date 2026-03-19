@@ -1,26 +1,35 @@
 """Decepticon Orchestrator — autonomous red team coordinator.
 
-The top-level orchestration agent that coordinates the full kill chain.
-It reads OPPLAN objectives, delegates to specialist sub-agents (recon,
-exploit, postexploit, planner), and synthesizes results across phases.
+Uses create_agent() directly (not create_deep_agent()) to control the
+middleware stack precisely. The orchestrator coordinates the full kill chain
+by delegating to specialist sub-agents (recon, exploit, postexploit, planner).
 
-Uses create_deep_agent() to get:
-  - SubAgentMiddleware: task() tool for delegating to sub-agents
-  - TodoListMiddleware: write_todos() for objective tracking
-  - FilesystemMiddleware: file ops for reading/updating engagement docs
-  - SkillsMiddleware: workflow skill for kill chain dependency graph
-  - SummarizationMiddleware: auto-compact for long orchestration sessions
+Middleware stack (selected for orchestration):
+  1. SkillsMiddleware — progressive disclosure of SKILL.md knowledge
+  2. FilesystemMiddleware — file ops for reading/updating engagement docs
+  3. SubAgentMiddleware — task() tool for delegating to sub-agents
+  4. TodoListMiddleware — write_todos() for objective tracking
+  5. SummarizationMiddleware — auto-compact for long orchestration sessions
+  6. AnthropicPromptCachingMiddleware — cache system prompt for Anthropic
+  7. PatchToolCallsMiddleware — repair dangling tool calls
 
 Sub-agents are passed as CompiledSubAgent, wrapping existing agent factories
-(create_planner_agent, create_recon_agent, create_exploit_agent, create_postexploit_agent) so they
-run with their full middleware stack and skill sets intact.
+(create_planner_agent, create_recon_agent, create_exploit_agent,
+create_postexploit_agent) so they run with their full middleware stack and
+skill sets intact.
 """
 
 from pathlib import Path
 
-from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
-from deepagents.middleware.subagents import CompiledSubAgent
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from deepagents.middleware.skills import SkillsMiddleware
+from deepagents.middleware.subagents import CompiledSubAgent, SubAgentMiddleware
+from deepagents.middleware.summarization import create_summarization_middleware
+from langchain.agents import create_agent
+from langchain.agents.middleware import TodoListMiddleware
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 
 from decepticon.backends import DockerSandbox
@@ -42,17 +51,14 @@ def _load_system_prompt() -> str:
 
 
 def create_decepticon_agent():
-    """Initialize the Decepticon Orchestrator using create_deep_agent().
+    """Initialize the Decepticon Orchestrator using create_agent() directly.
 
-    This is the top-level agent that coordinates the full red team kill chain.
-    It delegates actual offensive operations to specialist sub-agents while
-    maintaining strategic oversight and engagement state.
-
-    Architecture:
-      - Decepticon (orchestrator) uses task() to delegate to sub-agents
-      - Each sub-agent is a CompiledSubAgent wrapping an existing agent factory
-      - Sub-agents retain their full middleware stack and skill sets
-      - Decepticon has its own skills (/skills/decepticon/) + shared skills (/skills/shared/)
+    Context engineering decisions:
+      - Explicit middleware stack instead of create_deep_agent() defaults
+      - SubAgentMiddleware: task() tool for delegating to specialist sub-agents
+      - TodoListMiddleware: write_todos() for objective tracking during orchestration
+      - No BASE_AGENT_PROMPT: decepticon.md is the complete system prompt
+      - CompositeBackend: /skills/* → host FS (read-only), default → Docker sandbox
 
     Returns a compiled LangGraph agent ready for invocation.
     """
@@ -131,14 +137,25 @@ def create_decepticon_agent():
         ),
     ]
 
-    agent = create_deep_agent(
-        model=llm,
+    # Assemble middleware stack — orchestrator needs SubAgentMiddleware + TodoListMiddleware
+    # on top of the standard stack used by specialist agents
+    middleware = [
+        SkillsMiddleware(backend=backend, sources=["/skills/decepticon/", "/skills/shared/"]),
+        FilesystemMiddleware(backend=backend),
+        SubAgentMiddleware(subagents=subagents),
+        TodoListMiddleware(),
+        create_summarization_middleware(llm, backend),
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+        PatchToolCallsMiddleware(),
+    ]
+
+    agent = create_agent(
+        llm,
         system_prompt=system_prompt,
-        tools=[bash],  # For reading/writing engagement docs directly
-        subagents=subagents,
-        skills=["/skills/decepticon/", "/skills/shared/"],
-        backend=backend,
+        tools=[bash],
+        middleware=middleware,
         checkpointer=checkpointer,
+        name="decepticon",
     )
 
     # Orchestrator needs a higher recursion budget than sub-agents (40).
