@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from decepticon.llm.factory import LLMFactory
-from decepticon.llm.models import LLMModelMapping, ProxyConfig
+from decepticon.llm.models import GEMINI_FLASH, HAIKU, LLMModelMapping, ProxyConfig
 
 
 class TestLLMFactory:
@@ -23,7 +23,7 @@ class TestLLMFactory:
     def test_get_model_returns_chat_model(self):
         model = self.factory.get_model("recon")
         assert model is not None
-        assert model.model_name == "gemini/gemini-2.5-flash"
+        assert model.model_name == HAIKU
 
     def test_get_model_caches_instances(self):
         model1 = self.factory.get_model("recon")
@@ -46,10 +46,9 @@ class TestLLMFactory:
     def test_get_fallback_models_with_fallback(self):
         models = self.factory.get_fallback_models("recon")
         assert len(models) == 1
-        assert models[0].model_name == "anthropic/claude-sonnet-4-6"
+        assert models[0].model_name == GEMINI_FLASH
 
     def test_get_fallback_models_without_fallback(self):
-        # Create a mapping with no fallback for a role
         mapping = LLMModelMapping()
         mapping.recon.fallback = None
         factory = LLMFactory(self.proxy, mapping)
