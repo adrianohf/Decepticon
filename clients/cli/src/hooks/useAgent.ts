@@ -150,7 +150,7 @@ export function useAgent({
     const threadId = threadIdRef.current;
     if (threadId) {
       clientRef.current.runs
-        .cancelMany({ threadId, status: "running", action: "interrupt" })
+        .cancelMany({ threadId, status: "running" })
         .catch(() => {});
     }
 

@@ -24,6 +24,7 @@ to the underlying runnable's ainvoke(), bypassing all streaming logic.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
 import time
@@ -239,7 +240,8 @@ class StreamingRunnable:
                     new_messages, active_tool_calls, renderer, has_renderer, writer
                 )
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            log.info("[%s] invoke() cancelled", self._name)
             self._emit_end(renderer, has_renderer, writer, time.monotonic() - start, cancelled=True)
             raise
         except Exception:
@@ -300,7 +302,8 @@ class StreamingRunnable:
                     new_messages, active_tool_calls, renderer, has_renderer, writer
                 )
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            log.info("[%s] ainvoke() cancelled", self._name)
             self._emit_end(renderer, has_renderer, writer, time.monotonic() - start, cancelled=True)
             raise
         except Exception:

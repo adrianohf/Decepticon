@@ -96,13 +96,15 @@ bash(command="", session="nmap")  → [RUNNING]  ← wasted call
 
 **Key**: Always save scan output to files with `-oN`/`-o` flags — results persist even after context is cleared.
 
-## write_file — Report Generation
-**When to use**: Writing the final reconnaissance report and engagement deliverables.
+## write_file — File Creation & Report Generation
+**When to use**: Writing ANY file — reports, notes, configs, scripts, or any other document.
+NEVER use `bash(command="cat > file << EOF ...")` to create files. Always use `write_file` instead.
+
+**Why not bash?**: `bash(command="cat > file << EOF ...")` echoes the entire file content back
+as tool output, consuming context tokens. `write_file` creates files without adding to context.
 
 **Report path**: `recon/report_<target>.md` (relative to engagement directory)
 **Format**: Markdown ONLY. Do NOT generate JSON or TXT duplicates of the same findings.
-**Why not bash?**: `bash(command="cat > file << EOF ...")` echoes the entire report content back
-as tool output, consuming context tokens. `write_file` creates files without adding to context.
 
 **Example**:
 ```
