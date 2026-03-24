@@ -94,7 +94,7 @@ def create_recon_agent():
         tools=[bash],
         middleware=middleware,
         name="recon",
-    ).with_config({"recursion_limit": 40})
+    ).with_config({"recursion_limit": 100})
 
     return agent
 

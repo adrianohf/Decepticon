@@ -46,6 +46,7 @@ services:
   # Evasive Red Team Sandbox
   # Rootless container for executing tools (nmap, whois, etc.) securely
   sandbox:
+    image: ghcr.io/catower/decepticon-sandbox:${DECEPTICON_VERSION:-latest}
     build:
       context: .
       dockerfile: containers/sandbox.Dockerfile
@@ -59,13 +60,14 @@ services:
       - NET_ADMIN
       - NET_BIND_SERVICE
     volumes:
-      - ./.decepticon:/workspace
+      - ${DECEPTICON_DATA_DIR:-./.decepticon}:/workspace
     restart: unless-stopped
 
   # LangGraph Platform — Agent API Server
   # Exposes all agents (decepticon, recon, planner, exploit, postexploit)
   # as a streaming API on port 2024. Ink CLI connects here.
   langgraph:
+    image: ghcr.io/catower/decepticon-langgraph:${DECEPTICON_VERSION:-latest}
     build:
       context: .
       dockerfile: containers/langgraph.Dockerfile
@@ -79,7 +81,7 @@ services:
       - DECEPTICON_DOCKER__SANDBOX_CONTAINER_NAME=decepticon-sandbox
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./.decepticon:/workspace
+      - ${DECEPTICON_DATA_DIR:-./.decepticon}:/workspace
     depends_on:
       litellm:
         condition: service_started
@@ -88,6 +90,26 @@ services:
     networks:
       - decepticon-net
     restart: unless-stopped
+
+  # Ink CLI — Interactive terminal UI
+  # Runs via: docker compose run --rm cli
+  cli:
+    image: ghcr.io/catower/decepticon-cli:${DECEPTICON_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: containers/cli.Dockerfile
+    container_name: decepticon-cli
+    stdin_open: true
+    tty: true
+    environment:
+      - DECEPTICON_API_URL=http://langgraph:2024
+    depends_on:
+      langgraph:
+        condition: service_started
+    networks:
+      - decepticon-net
+    profiles:
+      - cli
 
   # ── Victim Infrastructure (demo / testing only) ──────────────────────
   # DVWA — Damn Vulnerable Web Application

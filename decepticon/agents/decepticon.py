@@ -157,7 +157,7 @@ def create_decepticon_agent():
         name="decepticon",
     )
 
-    # Orchestrator needs a higher recursion budget than sub-agents (40).
+    # Orchestrator needs a higher recursion budget than sub-agents (100).
     return agent.with_config({"recursion_limit": 200})
 
 

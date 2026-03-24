@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { Box, Text } from "ink";
 import { useSpinnerFrame } from "../hooks/useSpinnerFrame.js";
 import type { StreamStats } from "../hooks/useAgent.js";
@@ -21,18 +21,18 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-// Shimmer gradient palette — blue → cyan → magenta → blue cycle
+// Shimmer gradient palette — Decepticon red theme
 const SHIMMER_COLORS = [
-  "#6366f1", // indigo
-  "#818cf8",
-  "#a78bfa", // violet
-  "#c084fc",
-  "#e879f9", // fuchsia
-  "#f472b6", // pink
-  "#e879f9",
-  "#c084fc",
-  "#a78bfa",
-  "#818cf8",
+  "#b91c1c", // red-700
+  "#dc2626", // red-600
+  "#ef4444", // red-500
+  "#f87171", // red-400
+  "#fca5a5", // red-300
+  "#fecaca", // red-200
+  "#fca5a5", // red-300
+  "#f87171", // red-400
+  "#ef4444", // red-500
+  "#dc2626", // red-600
 ];
 
 /** Render text with a shifting gradient shimmer effect. */
@@ -55,30 +55,61 @@ function ShimmerText({ text, tick }: { text: string; tick: number }) {
   );
 }
 
-/** Claude Code-style activity indicator with shimmer, elapsed time, and live token stats. */
+// Pulse palette for the ● icon — smooth bright↔dim cycle synced with shimmer
+const PULSE_COLORS = [
+  "#fecaca", // bright peak
+  "#fca5a5",
+  "#f87171",
+  "#ef4444",
+  "#dc2626",
+  "#b91c1c", // dim trough
+  "#dc2626",
+  "#ef4444",
+  "#f87171",
+  "#fca5a5",
+];
+
+/** Activity indicator with pulsing dot, red shimmer, and animated token counter. */
 export const ActivityIndicator = React.memo(function ActivityIndicator({
   isStreaming,
   streamStats,
 }: ActivityIndicatorProps) {
   const { tick } = useSpinnerFrame(isStreaming);
+  const displayTokensRef = useRef(0);
 
-  if (!isStreaming) return null;
+  if (!isStreaming) {
+    displayTokensRef.current = 0;
+    return null;
+  }
+
+  // Animate token count: ease toward actual value each tick (driven by 80ms re-renders)
+  const targetTokens = streamStats?.totalTokens ?? 0;
+  if (displayTokensRef.current < targetTokens) {
+    const gap = targetTokens - displayTokensRef.current;
+    const step = Math.max(1, Math.ceil(gap * 0.15));
+    displayTokensRef.current = Math.min(targetTokens, displayTokensRef.current + step);
+  }
 
   const elapsed = streamStats
     ? formatElapsed(Date.now() - streamStats.startTime)
     : "";
-  const tokenCount = streamStats
-    ? `\u2191 ${formatTokens(streamStats.totalTokens)} tokens`
-    : "";
+  const tokenCount =
+    displayTokensRef.current > 0
+      ? `\u2191 ${formatTokens(displayTokensRef.current)} tokens`
+      : "";
 
   const meta = [elapsed, tokenCount].filter(Boolean).join(" \u00B7 ");
   const metaStr = meta ? ` (${meta})` : "";
 
+  // Slow pulse: cycle through palette every 3 ticks (240ms per step)
+  const pulseIdx = Math.floor(tick / 3) % PULSE_COLORS.length;
+
   return (
     <Box marginTop={1}>
       <Text>
-        <Text color="cyan">{"\u2726 "}</Text>
-        <ShimmerText text="Working..." tick={tick} />
+        <Text color={PULSE_COLORS[pulseIdx]}>{"\u25CF"}</Text>
+        <Text>{" "}</Text>
+        <ShimmerText text="Hacking..." tick={tick} />
         <Text dimColor>{metaStr}</Text>
       </Text>
     </Box>

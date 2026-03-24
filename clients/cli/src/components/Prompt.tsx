@@ -52,7 +52,7 @@ const AgentBar = React.memo(function AgentBar({
         return (
           <Text key={agent}>
             {isActive ? (
-              <Text color="cyan" bold={bright} dimColor={!bright}>
+              <Text color="#ef4444" bold={bright} dimColor={!bright}>
                 {label}
               </Text>
             ) : (

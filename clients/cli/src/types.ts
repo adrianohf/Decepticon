@@ -36,6 +36,7 @@ export type AgentEventType =
   | "tool_result"
   | "bash_result"
   | "ai_message"
+  | "delegate"
   | "system";
 
 /** A single displayable event in the agent activity stream. */

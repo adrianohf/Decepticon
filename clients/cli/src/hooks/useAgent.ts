@@ -99,7 +99,7 @@ function extractText(content: LangChainMessage["content"]): string {
 const ASSISTANT_ID = "decepticon";
 
 export function useAgent({
-  apiUrl = "http://localhost:2024",
+  apiUrl = process.env.DECEPTICON_API_URL || "http://localhost:2024",
 }: UseAgentOptions = {}): UseAgentReturn {
   const clientRef = useRef(new Client({ apiUrl }));
   const threadIdRef = useRef<string | null>(null);
@@ -322,24 +322,31 @@ export function useAgent({
                   );
                 }
 
+                // Emit AI text content (even when tool_calls are present)
+                const text = extractText(msg.content)
+                  .replace(/<\/?result>/g, "")
+                  .trim();
+                if (text) {
+                  addEvent({ type: "ai_message", content: text });
+                }
+
                 if (msg.tool_calls?.length) {
                   for (const tc of msg.tool_calls) {
                     toolCallArgs.set(tc.id, tc.args);
                     toolCallNames.set(tc.id, tc.name);
-                    // Don't show pending indicator for task() — sub-agent events handle that
-                    if (tc.name !== "task") {
+                    if (tc.name === "task") {
+                      // Emit delegate event for sub-agent dispatch
+                      addEvent({
+                        type: "delegate",
+                        content: (tc.args.description as string) ?? "",
+                        subagent: (tc.args.subagent_type as string) ?? "",
+                      });
+                    } else {
                       setPendingTool({ name: tc.name, args: tc.args });
                     }
                   }
                 } else {
-                  // AI text response
-                  const text = extractText(msg.content)
-                    .replace(/<\/?result>/g, "")
-                    .trim();
-                  if (text) {
-                    setPendingTool(null);
-                    addEvent({ type: "ai_message", content: text });
-                  }
+                  setPendingTool(null);
                 }
               } else if (msg.type === "tool") {
                 const content =

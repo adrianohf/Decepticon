@@ -93,7 +93,7 @@ def create_planner_agent():
         tools=[],
         middleware=middleware,
         name="planner",
-    ).with_config({"recursion_limit": 40})
+    ).with_config({"recursion_limit": 100})
 
     return agent
 

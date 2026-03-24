@@ -18,7 +18,7 @@ ruff check .                           # Lint
 ruff format .                          # Format
 ```
 
-CLI entry points: `decepticon` (main), `decepticon-auth` (credential management), `decepticon-init` (first-run setup).
+CLI entry point: `decepticon` starts the LangGraph dev server. The Ink CLI frontend is in `clients/cli/`.
 
 ## Architecture
 
@@ -38,7 +38,9 @@ CLI entry points: `decepticon` (main), `decepticon-auth` (credential management)
 
 **Sandbox** (`backends/docker_sandbox.py`): `DockerSandbox` wraps `docker exec` with tmux session management. Named sessions allow parallel scans. PS1 polling detects command completion. Stall detection after 10s of no output change.
 
-**Streaming** (`streaming.py`): `StreamingEngine` runs the agent and applies observation masking — tool outputs older than 3 turns and >5K chars are replaced with summaries. Defines `UIRenderer` protocol implemented by `CLIRenderer`.
+**Streaming** (`core/subagent_streaming.py`): `StreamingRunnable` wraps sub-agents and emits custom events (`subagent_start`, `subagent_tool_call`, `subagent_tool_result`, `subagent_message`, `subagent_end`) via LangGraph `get_stream_writer()`. The Ink CLI subscribes to these via `stream_mode="custom"`.
+
+**CLI** (`clients/cli/`): Ink.js (React for terminal) TypeScript app. Connects to LangGraph server via `@langchain/langgraph-sdk`. Renders tool calls, bash output, and sub-agent events in real time.
 
 ## Context Engineering Conventions
 
@@ -61,9 +63,13 @@ This codebase is designed around controlling LLM context consumption:
 
 ## Key Directories
 
+- `clients/cli/` — Ink.js (React for terminal) CLI frontend (TypeScript)
+- `containers/` — Dockerfiles: `langgraph.Dockerfile`, `sandbox.Dockerfile`, `cli.Dockerfile`
+- `decepticon/agents/` — LangGraph agent definitions (decepticon, recon, planner, exploit, postexploit)
+- `decepticon/backends/` — Docker sandbox backend (`DockerSandbox`)
 - `decepticon/auth/providers/` — OAuth implementations per LLM provider
-- `decepticon/ui/cli/` — Rich-based terminal UI (console, renderer, startup animation)
 - `skills/` — Markdown knowledge base injected via SkillsMiddleware
 - `reference/` — Read-only source code of related projects (not part of build)
-- `config/decepticon.yaml` — Default config file
-- Credentials: `~/.config/decepticon/auth.json` (mode 0600)
+- `config/` — Runtime configs (`litellm.yaml`, `decepticon.yaml`)
+- `scripts/install.sh` — One-line installer (`curl | bash`)
+- `.github/workflows/` — CI/CD (ci.yml, release.yml)
