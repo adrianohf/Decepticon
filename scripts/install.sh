@@ -222,6 +222,11 @@ case "${1:-}" in
         ;;
 
     update)
+        force=false
+        if [[ "${2:-}" == "--force" || "${2:-}" == "-f" ]]; then
+            force=true
+        fi
+
         # Resolve latest version
         local_version=$(cat "$DECEPTICON_HOME/.version" 2>/dev/null || echo "unknown")
         echo -e "${DIM}Current version: v${local_version}${NC}"
@@ -237,8 +242,8 @@ case "${1:-}" in
 
         echo -e "${DIM}Latest version:  v${latest}${NC}"
 
-        if [[ "$latest" == "$local_version" ]]; then
-            echo -e "${GREEN}Already up to date.${NC}"
+        if [[ "$latest" == "$local_version" && "$force" == false ]]; then
+            echo -e "${GREEN}Already up to date.${NC} Use ${BOLD}--force${NC} to re-pull images."
             exit 0
         fi
 
@@ -448,7 +453,7 @@ case "${1:-}" in
         echo -e "${BOLD}Usage:${NC}"
         echo "  decepticon              Start services and open CLI"
         echo "  decepticon stop         Stop all services"
-        echo "  decepticon update       Update images and config files"
+        echo "  decepticon update [-f]  Update images and config files (--force to re-pull)"
         echo "  decepticon status       Show service status"
         echo "  decepticon logs [svc]   Follow service logs (default: langgraph)"
         echo "  decepticon config       Edit configuration (.env)"
