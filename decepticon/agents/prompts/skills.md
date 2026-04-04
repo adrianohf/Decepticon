@@ -1,32 +1,21 @@
-<SKILLS>
-## Skill System — Progressive Disclosure
+<!-- THIS FILE IS NO LONGER LOADED AS A SHARED PROMPT FRAGMENT.
 
-Skills are markdown knowledge files (SKILL.md) containing detailed workflows, tool commands, and checklists for specific techniques.
+Skill system instructions are now injected dynamically by DecepticonSkillsMiddleware
+(decepticon/middleware/skills.py) via the wrap_model_call() hook. The middleware
+provides:
 
-### How It Works
-1. **Auto-injected metadata**: On startup, you receive a list of available skill names + one-line descriptions. This tells you WHAT skills exist.
-2. **On-demand full load**: The metadata is NOT enough to execute. You MUST `read_file` the full SKILL.md before using any technique it covers.
+  - Red-team-specific system prompt template
+  - Skills grouped by subdomain (kill chain phase)
+  - MITRE ATT&CK technique IDs shown inline
+  - Progressive disclosure instructions and bash access warnings
 
-### How to Load Skills
-Skills are on the host filesystem at `/skills/`, routed through a virtual backend.
+Previously this file was included via:
+    load_prompt("recon", shared=["bash", "skills"])
 
-```
-read_file("/skills/<category>/<skill-name>/SKILL.md")
-```
+Now agents use:
+    load_prompt("recon", shared=["bash"])
 
-**IMPORTANT**: Skills are NOT accessible via bash. The sandbox does not mount `/skills/`.
-- `bash(command="ls /skills/")` → will FAIL
-- `bash(command="cat /skills/.../SKILL.md")` → will FAIL
-- `read_file("/skills/.../SKILL.md")` → CORRECT
+And the middleware handles skill catalog injection on every LLM call.
 
-### When to Load
-- **Before each new phase** (recon, exploit, post-exploit, C2 setup): read the relevant skill FIRST, then execute.
-- **Before using a specific tool or technique**: if a skill covers it, read it first.
-- Do NOT skip skill loading even if you think you know the technique — skills contain environment-specific instructions (paths, configs, container names) that differ from generic knowledge.
-
-### Skill References
-Some skills have a `references/` subdirectory with additional files (quickstart guides, cheat sheets). These are also accessible via `read_file`:
-```
-read_file("/skills/post-exploit/c2-sliver/references/sliver-cheatsheet.md")
-```
-</SKILLS>
+See: decepticon/middleware/skills.py :: DECEPTICON_SKILLS_PROMPT
+-->
