@@ -167,6 +167,10 @@ export function useAgent({
 
   const submit = useCallback(
     (message: string): void => {
+      // Block submit while a stream is active to prevent race conditions
+      // where a second run cancels the first, leaving dangling tool calls
+      if (abortRef.current) return;
+
       addEvent({ type: "user", content: message });
 
       const runStream = async () => {
