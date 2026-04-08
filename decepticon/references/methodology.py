@@ -109,14 +109,15 @@ def classify_filename(name: str) -> str:
     return _slugify(key)
 
 
-def load_chapters(*, root: Path | None = None) -> list[Chapter]:
-    """Walk the cached repo and return every top-level chapter."""
+_chapters_cache: dict[Path, tuple[float, list[Chapter]]] = {}
+
+
+def _compute_chapters(root: Path | None) -> list[Chapter]:
     repo = cache_path(REPO_SLUG, root=root)
     if not repo.is_dir():
         return []
     chapters: list[Chapter] = []
     for md in sorted(repo.rglob("*.md")):
-        # Skip README and policy files at the root
         rel = md.relative_to(repo)
         if md.name.lower() in {"readme.md", "contributing.md", "code_of_conduct.md"}:
             continue
@@ -133,6 +134,29 @@ def load_chapters(*, root: Path | None = None) -> list[Chapter]:
             )
         )
     return chapters
+
+
+def load_chapters(*, root: Path | None = None) -> list[Chapter]:
+    """Walk the cached repo and return every top-level chapter.
+
+    Memoized per-process by (cache-root, repo mtime). Re-hydrating
+    the clone invalidates the cache via directory mtime change.
+    """
+    repo = cache_path(REPO_SLUG, root=root)
+    try:
+        mtime = repo.stat().st_mtime if repo.exists() else -1.0
+    except OSError:
+        mtime = -1.0
+    entry = _chapters_cache.get(repo)
+    if entry is not None and entry[0] == mtime:
+        return entry[1]
+    chapters = _compute_chapters(root)
+    _chapters_cache[repo] = (mtime, chapters)
+    return chapters
+
+
+def invalidate_chapters_cache() -> None:
+    _chapters_cache.clear()
 
 
 def lookup(

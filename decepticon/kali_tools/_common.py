@@ -3,15 +3,18 @@
 Two runner implementations are provided:
 
 - ``LocalSubprocessRunner`` — runs the command directly via
-  ``subprocess.run``. Used by tests and by agents that aren't wired
-  through a Docker sandbox.
-- ``DockerSandboxRunner`` — shells through an existing
-  ``DockerSandbox`` instance. Chosen automatically when the sandbox
-  context variable is set (see ``set_active_sandbox``).
+  ``subprocess.run``. Used by tests.
+- ``DockerSandboxRunner`` — shells through an active ``DockerSandbox``
+  bound via :func:`set_active_sandbox`. If no sandbox is bound and
+  the runner is active, tools **fail loudly** rather than silently
+  running on the host.
 
-The default runner is resolved lazily via ``get_runner()`` so tests
-can swap implementations with ``set_runner()`` without import-time
-ordering hazards.
+Runner binding is a module global protected by ``threading.RLock``
+(not a ``ContextVar``) because LangGraph runs tool nodes in a
+different async task context than the one that created the agent,
+and ``ContextVar`` values do not propagate across that boundary —
+which would silently degrade ``DockerSandboxRunner`` to local
+execution. See the history notes around ``set_active_sandbox``.
 
 Result shape is deliberately minimal:
 
@@ -38,7 +41,6 @@ import shlex
 import subprocess
 import time
 import uuid
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -152,10 +154,16 @@ class LocalSubprocessRunner:
 class DockerSandboxRunner:
     """Run the tool inside an active :class:`DockerSandbox`.
 
-    The sandbox is looked up via ``_active_sandbox`` which callers set
-    with :func:`set_active_sandbox`. If no sandbox is bound, this
-    runner falls back to ``LocalSubprocessRunner``.
+    The sandbox is looked up via the module-global bound by
+    :func:`set_active_sandbox`. If no sandbox is bound, this runner
+    raises — silently falling back to local execution would be a
+    sandbox escape, so callers must bind a sandbox explicitly. Pass
+    ``sandbox`` to the constructor when you want to avoid the
+    module-global and bind per-instance instead.
     """
+
+    def __init__(self, sandbox: Any | None = None) -> None:
+        self._explicit_sandbox = sandbox
 
     def run(
         self,
@@ -165,9 +173,19 @@ class DockerSandboxRunner:
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> CommandResult:
-        sandbox = _active_sandbox.get()
+        sandbox = self._explicit_sandbox if self._explicit_sandbox is not None else get_active_sandbox()
         if sandbox is None:
-            return LocalSubprocessRunner().run(argv, timeout=timeout, cwd=cwd, env=env)
+            return CommandResult(
+                command=list(argv),
+                ok=False,
+                returncode=126,
+                stderr=(
+                    "DockerSandboxRunner invoked without an active sandbox — "
+                    "call set_active_sandbox() before running Kali tools, or "
+                    "pass sandbox=... to the DockerSandboxRunner constructor."
+                ),
+                notes=["no active sandbox"],
+            )
         started = time.monotonic()
         cmd = " ".join(shlex.quote(c) for c in argv)
         if cwd:
@@ -193,33 +211,62 @@ class DockerSandboxRunner:
         )
 
 
-_active_sandbox: ContextVar[Any] = ContextVar("decepticon_kali_sandbox", default=None)
-_runner: ContextVar[ToolRunner] = ContextVar(
-    "decepticon_kali_runner", default=LocalSubprocessRunner()
-)
+# ── Sandbox / runner binding ───────────────────────────────────────────
+#
+# IMPORTANT: earlier versions of this module used a ``ContextVar`` to
+# carry the active runner across tool invocations. That turned out to
+# be unsafe — LangGraph runs tool nodes in a different async task
+# context than the one that created the agent, so the ContextVar
+# value set by the agent factory was invisible at call time and the
+# runner silently fell back to ``LocalSubprocessRunner``, meaning
+# Kali tools would execute on the *host* instead of the Docker
+# sandbox. That is a silent sandbox escape.
+#
+# Fix: use a **module-global** runner and sandbox protected by a lock.
+# ``set_active_sandbox`` and ``set_runner`` mutate the module globals
+# directly so any subsequent ``run_command`` — regardless of which
+# asyncio task it runs in — sees the same value. Tests that need
+# isolation explicitly call ``set_runner(LocalSubprocessRunner())`` in
+# their teardown.
+import threading
+
+_runner_lock = threading.RLock()
+_active_sandbox_obj: Any = None
+_current_runner: ToolRunner = LocalSubprocessRunner()
 
 
 def set_active_sandbox(sandbox: Any) -> None:
-    """Bind a ``DockerSandbox`` to the current context.
+    """Bind a ``DockerSandbox`` as the process-wide active sandbox.
 
-    Wrap the call to ``DockerSandboxRunner`` users via ``set_runner``
-    if you want every subsequent tool invocation to flow through the
-    sandbox.
+    Call this at agent-factory time **before** any Kali tool is
+    invoked. The binding is a module global so it survives the
+    LangGraph task boundary.
     """
-    _active_sandbox.set(sandbox)
+    global _active_sandbox_obj
+    with _runner_lock:
+        _active_sandbox_obj = sandbox
 
 
 def get_active_sandbox() -> Any:
-    return _active_sandbox.get()
+    with _runner_lock:
+        return _active_sandbox_obj
 
 
 def set_runner(runner: ToolRunner) -> None:
-    """Override the runner for the current context (tests)."""
-    _runner.set(runner)
+    """Override the process-wide runner.
+
+    Typically paired with ``set_active_sandbox`` — agent factories call
+    ``set_runner(DockerSandboxRunner())`` and ``set_active_sandbox(sb)``
+    so every tool invocation goes through the sandbox.
+    """
+    global _current_runner
+    with _runner_lock:
+        _current_runner = runner
 
 
 def get_runner() -> ToolRunner:
-    return _runner.get()
+    with _runner_lock:
+        return _current_runner
 
 
 def run_command(
@@ -231,6 +278,43 @@ def run_command(
 ) -> CommandResult:
     """Execute via the active runner."""
     return get_runner().run(argv, timeout=timeout, cwd=cwd, env=env)
+
+
+class FlagInjectionError(ValueError):
+    """Raised when an LLM-supplied tool argument starts with ``-``.
+
+    ``shlex.quote`` stops shell metacharacter injection but it does not
+    stop a value from being interpreted by the target binary as a
+    flag. For example, ``nmap_scan(target="--script=http-shellshock")``
+    would inject an nmap script if passed through verbatim.
+
+    Every Kali wrapper validates LLM-facing positional arguments
+    through :func:`assert_not_flag` before building argv.
+    """
+
+
+def assert_not_flag(value: str, *, field: str) -> str:
+    """Reject arguments that start with ``-`` / ``--`` / ``@`` / ``+``.
+
+    ``@`` is rejected because many tools (nmap, curl) treat ``@file``
+    as "read arguments from file". ``+`` is rejected for the same
+    reason with a handful of legacy tools. Empty values are allowed —
+    callers that need to enforce non-empty must check separately.
+    """
+    if value is None or value == "":
+        return ""
+    stripped = str(value).lstrip()
+    if stripped.startswith(("-", "@", "+")):
+        raise FlagInjectionError(
+            f"{field}={value!r} starts with a flag-like character — "
+            "refusing to pass it through as a tool argument."
+        )
+    return value
+
+
+def safe_argv_value(value: str, *, field: str) -> str:
+    """Return ``value`` if it passes :func:`assert_not_flag`, else raise."""
+    return assert_not_flag(value, field=field)
 
 
 def ensure_scratch() -> Path:
@@ -258,7 +342,10 @@ def format_result(
 __all__ = [
     "CommandResult",
     "DockerSandboxRunner",
+    "FlagInjectionError",
     "LocalSubprocessRunner",
+    "assert_not_flag",
+    "safe_argv_value",
     "SCRATCH_DIR",
     "ToolRunner",
     "ensure_scratch",

@@ -113,8 +113,10 @@ def _parse_markdown(path: Path, text: str) -> list[Recipe]:
     return recipes
 
 
-def load_recipes(*, root: Path | None = None, limit: int = 4000) -> list[Recipe]:
-    """Walk the cached book-of-secret-knowledge repo for recipes."""
+_recipes_cache: dict[tuple[Path, int], tuple[float, list[Recipe]]] = {}
+
+
+def _compute_recipes(root: Path | None, limit: int) -> list[Recipe]:
     repo = cache_path(REPO_SLUG, root=root)
     if not repo.is_dir():
         return []
@@ -128,6 +130,31 @@ def load_recipes(*, root: Path | None = None, limit: int = 4000) -> list[Recipe]
         if len(recipes) >= limit:
             break
     return recipes[:limit]
+
+
+def load_recipes(*, root: Path | None = None, limit: int = 4000) -> list[Recipe]:
+    """Walk the cached book-of-secret-knowledge repo for recipes.
+
+    Memoized per-process by (cache-root, repo mtime, limit). Walking
+    600+ markdown files on every ``oneliner_search`` call is wasted
+    I/O — re-hydration invalidates the cache via directory mtime.
+    """
+    repo = cache_path(REPO_SLUG, root=root)
+    key = (repo, limit)
+    try:
+        mtime = repo.stat().st_mtime if repo.exists() else -1.0
+    except OSError:
+        mtime = -1.0
+    entry = _recipes_cache.get(key)
+    if entry is not None and entry[0] == mtime:
+        return entry[1]
+    recipes = _compute_recipes(root, limit)
+    _recipes_cache[key] = (mtime, recipes)
+    return recipes
+
+
+def invalidate_recipes_cache() -> None:
+    _recipes_cache.clear()
 
 
 def search(

@@ -157,6 +157,69 @@ class TestKgIngestTestssl:
         vulns = graph.by_kind(NodeKind.VULNERABILITY)
         assert len(vulns) == 2
 
+    def test_links_to_host_when_target_passed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kg_path = _configure_kg(monkeypatch, tmp_path)
+        out = tmp_path / "testssl.json"
+        out.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "heartbleed",
+                        "severity": "CRITICAL",
+                        "finding": "Heartbleed detected",
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+        payload = json.loads(
+            research_tools.kg_ingest_testssl.invoke(
+                {"path": str(out), "target": "api.example.com:443"}
+            )
+        )
+        assert payload["vulns_added"] == 1
+        assert payload["linked_to_host"] == 1
+        graph = load_graph(kg_path)
+        hosts = graph.by_kind(NodeKind.HOST)
+        vulns = graph.by_kind(NodeKind.VULNERABILITY)
+        assert len(hosts) == 1
+        assert hosts[0].label == "api.example.com"
+        # Vuln reachable from host via HAS_VULN
+        out_edges = [e for e in graph.edges.values() if e.src == hosts[0].id]
+        assert any(e.dst == vulns[0].id for e in out_edges)
+
+    def test_reads_target_from_envelope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kg_path = _configure_kg(monkeypatch, tmp_path)
+        out = tmp_path / "testssl.json"
+        out.write_text(
+            json.dumps(
+                {
+                    "targetHost": "tls.example.com",
+                    "scanResult": [
+                        {
+                            "vulnerabilities": [
+                                {
+                                    "id": "cbc_chacha",
+                                    "severity": "HIGH",
+                                    "finding": "Weak CBC suites",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload = json.loads(research_tools.kg_ingest_testssl.invoke({"path": str(out)}))
+        assert payload["vulns_added"] == 1
+        assert payload["linked_to_host"] == 1
+        graph = load_graph(kg_path)
+        assert len(graph.by_kind(NodeKind.HOST)) == 1
+
 
 class TestKgIngestCrackmapexec:
     def test_parses_success_lines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -196,3 +259,8 @@ class TestKgIngestAsrep:
         creds = graph.by_kind(NodeKind.CREDENTIAL)
         assert len(creds) == 2
         assert all("krb5asrep" in str(c.props.get("secret_type", "")) for c in creds)
+        # Regression guard: the label must be the username, not the
+        # encrypted-timestamp hex tail (old $4 off-by-one).
+        labels = {c.label for c in creds}
+        assert "CORP.LOCAL\\alice" in labels
+        assert "CORP.LOCAL\\bob" in labels

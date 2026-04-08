@@ -241,8 +241,10 @@ def _parse_readme(repo: Path) -> list[ToolEntry]:
     return entries
 
 
-def load_entries(*, root: Path | None = None) -> list[ToolEntry]:
-    """Return the merged entry list: fallback YAML + cached upstream parse."""
+_entries_cache: dict[Path, tuple[float, list[ToolEntry]]] = {}
+
+
+def _compute_entries(root: Path | None) -> list[ToolEntry]:
     merged: dict[tuple[str, str], ToolEntry] = {}
     for entry in _load_yaml_fallback():
         merged[(entry.name.lower(), entry.phase)] = entry
@@ -253,6 +255,28 @@ def load_entries(*, root: Path | None = None) -> list[ToolEntry]:
             if key not in merged:
                 merged[key] = entry
     return list(merged.values())
+
+
+def load_entries(*, root: Path | None = None) -> list[ToolEntry]:
+    """Return the merged entry list: fallback YAML + cached upstream parse.
+
+    Memoized per-process keyed by the RedTeam-Tools cache mtime.
+    """
+    repo = cache_path(REPO_SLUG, root=root)
+    try:
+        mtime = repo.stat().st_mtime if repo.exists() else -1.0
+    except OSError:
+        mtime = -1.0
+    entry = _entries_cache.get(repo)
+    if entry is not None and entry[0] == mtime:
+        return entry[1]
+    entries = _compute_entries(root)
+    _entries_cache[repo] = (mtime, entries)
+    return entries
+
+
+def invalidate_entries_cache() -> None:
+    _entries_cache.clear()
 
 
 def lookup(

@@ -68,11 +68,16 @@ class TestLocalSubprocessRunner:
 
 
 class TestDockerSandboxRunner:
-    def test_falls_back_when_no_sandbox(self) -> None:
-        # No active sandbox → DockerSandboxRunner forwards to local
+    def test_fails_loudly_when_no_sandbox(self) -> None:
+        # Regression guard: silent fallback to local is a sandbox escape.
+        # Without an active sandbox, DockerSandboxRunner must return a
+        # non-ok result with a clear error instead of running on host.
+        set_active_sandbox(None)
         runner = DockerSandboxRunner()
         result = runner.run(["true"], timeout=5.0)
-        assert result.ok
+        assert not result.ok
+        assert result.returncode == 126
+        assert "no active sandbox" in " ".join(result.notes)
 
     def test_uses_sandbox_when_set(self) -> None:
         class StubSandbox:
@@ -97,6 +102,30 @@ class TestDockerSandboxRunner:
         assert "hi there" in stub.last_cmd
         assert result.stdout == "fake-output"
 
+    def test_explicit_sandbox_overrides_module_global(self) -> None:
+        class StubSandbox:
+            def __init__(self, tag: str) -> None:
+                self.tag = tag
+                self.last_cmd = ""
+
+            def execute(self, cmd: str, timeout: int = 0) -> object:
+                self.last_cmd = f"{self.tag}::{cmd}"
+
+                class _R:
+                    stdout = ""
+                    stderr = ""
+                    returncode = 0
+
+                return _R()
+
+        global_stub = StubSandbox("GLOBAL")
+        explicit_stub = StubSandbox("EXPLICIT")
+        set_active_sandbox(global_stub)
+        runner = DockerSandboxRunner(sandbox=explicit_stub)
+        runner.run(["echo", "x"], timeout=5.0)
+        assert explicit_stub.last_cmd.startswith("EXPLICIT")
+        assert global_stub.last_cmd == ""
+
 
 class TestFormatResult:
     def test_envelope_shape(self) -> None:
@@ -109,14 +138,17 @@ class TestFormatResult:
 
 class TestScratchFile:
     def test_unique_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DECEPTICON_KALI_SCRATCH", str(tmp_path))
-        # Re-import to pick up env var
-        import importlib
-
+        # Patch the module-level SCRATCH_DIR directly. We must NOT
+        # ``importlib.reload(common)`` here — a reload rebuilds
+        # ``FlagInjectionError`` as a new class, which would break the
+        # ``except FlagInjectionError`` handlers that were bound to
+        # the pre-reload class object when the tool modules were
+        # imported.
         import decepticon.kali_tools._common as common
 
-        importlib.reload(common)
+        monkeypatch.setattr(common, "SCRATCH_DIR", tmp_path)
         a = common.scratch_file(".txt")
         b = common.scratch_file(".txt")
         assert a != b
         assert a.suffix == ".txt"
+        assert a.parent == tmp_path

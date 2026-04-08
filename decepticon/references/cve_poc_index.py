@@ -112,17 +112,47 @@ def _ingest_trickest(repo: Path, index: PoCIndex) -> int:
     return added
 
 
+#: Skip files larger than this many bytes when scanning the Mr-xn
+#: mirror. Keeps an unbounded upstream repo from blowing up the walk.
+_MAX_SCAN_SIZE = 512 * 1024  # 512 KB is plenty for a PoC script
+
+
 def _ingest_mrxn(repo: Path, index: PoCIndex) -> int:
-    """Scan filenames and markdown in the Mr-xn mirror for CVE IDs + URLs."""
-    if not repo.is_dir():
+    """Scan filenames and markdown in the Mr-xn mirror for CVE IDs + URLs.
+
+    Walks the repo without following symlinks: an upstream symlink
+    pointing outside the cache root would otherwise let a compromised
+    upstream repo leak host paths into the index and, via
+    ``cve_poc_lookup``, into the agent context.
+    """
+    if not repo.is_dir() or repo.is_symlink():
+        return 0
+    try:
+        repo_real = repo.resolve(strict=False)
+    except OSError:
         return 0
     added = 0
     for path in repo.rglob("*"):
-        if not path.is_file():
+        try:
+            if path.is_symlink():
+                continue
+            if not path.is_file():
+                continue
+            # Ensure the resolved path is still inside the cache root —
+            # otherwise we'd happily read /etc/shadow if someone
+            # swapped in a symlink between rglob() and is_file().
+            real = path.resolve(strict=False)
+            real.relative_to(repo_real)
+        except (OSError, ValueError):
             continue
         suffix = path.suffix.lower()
         if suffix not in {".md", ".txt", ".py"}:
             # Avoid blowing up on huge binary/sample files
+            continue
+        try:
+            if path.stat().st_size > _MAX_SCAN_SIZE:
+                continue
+        except OSError:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -133,8 +163,10 @@ def _ingest_mrxn(repo: Path, index: PoCIndex) -> int:
         ids = {i.upper() for i in (name_ids + body_ids)}
         if not ids:
             continue
-        # Every CVE ID in scope claims the file path itself as a PoC
-        rel = str(path.relative_to(repo))
+        try:
+            rel = str(path.relative_to(repo))
+        except ValueError:
+            continue
         url = f"file://{rel}"
         for cve_id in ids:
             before = len(index.entries.get(cve_id, ()))
@@ -201,24 +233,56 @@ def load_index(*, root: Path | None = None) -> PoCIndex:
     return index
 
 
+# ── Process-level cache ────────────────────────────────────────────────
+#
+# The persisted PoC index can be tens of MB. Reloading it on every
+# ``lookup_poc`` call dominates CVE lookup latency. We memoize the
+# PoCIndex for the life of the process, keyed by the resolved index
+# file path. When the file's mtime changes we reload — that way
+# ``references_hydrate`` picks up changes without a process restart.
+
+_index_cache: dict[Path, tuple[float, PoCIndex]] = {}
+
+
+def _cached_index(root: Path | None) -> PoCIndex:
+    path = _index_file(root)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = -1.0
+    entry = _index_cache.get(path)
+    if entry is not None and entry[0] == mtime:
+        return entry[1]
+    index = load_index(root=root)
+    if index.size() == 0:
+        # Try a live build in case the cache was hydrated but not
+        # indexed yet. Store even an empty-after-build to avoid
+        # re-walking on every call.
+        index = build_index(root=root)
+        if index.size() > 0:
+            try:
+                save_index(index, root=root)
+                mtime = path.stat().st_mtime
+            except OSError:
+                pass
+    _index_cache[path] = (mtime, index)
+    return index
+
+
+def invalidate_cache() -> None:
+    """Drop the cached PoCIndex (tests / post-hydrate)."""
+    _index_cache.clear()
+
+
 def lookup_poc(cve_id: str, *, root: Path | None = None) -> list[str]:
     """Convenience lookup that reads the persisted index lazily.
 
     Falls back to an on-the-fly build of the trickest cache if no
     persisted index exists yet. Returns ``[]`` when neither cache is
-    present.
+    present. The loaded index is memoized per-process so subsequent
+    lookups skip the JSON parse.
     """
-    index = load_index(root=root)
-    if index.size() == 0:
-        # Try a live build in case the cache was hydrated but not
-        # indexed yet.
-        index = build_index(root=root)
-        if index.size() > 0:
-            try:
-                save_index(index, root=root)
-            except OSError:
-                pass
-    return index.lookup(cve_id)
+    return _cached_index(root).lookup(cve_id)
 
 
 __all__ = [
@@ -226,6 +290,7 @@ __all__ = [
     "PoCIndex",
     "TRICKEST_SLUG",
     "build_index",
+    "invalidate_cache",
     "load_index",
     "lookup_poc",
     "save_index",

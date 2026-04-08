@@ -213,8 +213,10 @@ def parse_tops_file(path: Path) -> list[BugReport]:
     return reports
 
 
-def load_corpus(*, root: Path | None = None) -> list[BugReport]:
-    """Walk the cached repo and return every BugReport row."""
+_corpus_cache: dict[Path, tuple[float, list[BugReport]]] = {}
+
+
+def _compute_corpus(root: Path | None) -> list[BugReport]:
     repo = cache_path(REPO_SLUG, root=root)
     if not repo.is_dir():
         return []
@@ -230,20 +232,41 @@ def load_corpus(*, root: Path | None = None) -> list[BugReport]:
         if p.is_file():
             files.append(p)
     if not files:
-        # Fallback — any tops_*.md at the repo root
         files = sorted(repo.glob("tops_*.md"))
     reports: list[BugReport] = []
     seen: set[str] = set()
     for f in files:
         for r in parse_tops_file(f):
-            # Dedup on URL when present — multiple tops files cite the
-            # same report under different sort orders.
             key = r.url or f"{r.title}|{r.cwe}|{r.source_file}"
             if key in seen:
                 continue
             seen.add(key)
             reports.append(r)
     return reports
+
+
+def load_corpus(*, root: Path | None = None) -> list[BugReport]:
+    """Walk the cached repo and return every BugReport row.
+
+    Memoized per-process by (cache-root, repo mtime). Re-hydrating the
+    upstream clone invalidates the cache via directory mtime change.
+    """
+    repo = cache_path(REPO_SLUG, root=root)
+    try:
+        mtime = repo.stat().st_mtime if repo.exists() else -1.0
+    except OSError:
+        mtime = -1.0
+    entry = _corpus_cache.get(repo)
+    if entry is not None and entry[0] == mtime:
+        return entry[1]
+    corpus = _compute_corpus(root)
+    _corpus_cache[repo] = (mtime, corpus)
+    return corpus
+
+
+def invalidate_corpus_cache() -> None:
+    """Drop the process-level corpus cache (tests / post-hydrate)."""
+    _corpus_cache.clear()
 
 
 def search(

@@ -90,6 +90,36 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+#: Hardened environment for every ``git`` subprocess invocation.
+#: - ``GIT_TERMINAL_PROMPT=0``: never prompt for credentials.
+#: - ``GIT_ALLOW_PROTOCOL``: refuse ``ext::`` / ``file::`` / ``ssh`` —
+#:   only permit the network protocols we expect to use for public
+#:   reference repos.
+#: - ``GIT_CONFIG_NOSYSTEM``/``NOGLOBAL``: prevent an attacker who
+#:   writes ``~/.gitconfig`` or ``/etc/gitconfig`` from injecting
+#:   ``core.sshCommand`` / ``core.gitProxy`` side channels.
+_GIT_ENV: dict[str, str] = {
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_ALLOW_PROTOCOL": "https:http",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_COUNT": "0",
+    "GIT_ASKPASS": "/bin/true",
+}
+
+
+def _run_git(argv: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+    """Run a ``git`` command with the hardened environment overlay."""
+    env = {**os.environ, **_GIT_ENV}
+    return subprocess.run(
+        argv,
+        check=False,
+        capture_output=True,
+        timeout=timeout,
+        env=env,
+    )
+
+
 def ensure_cached(
     slug: str,
     *,
@@ -101,24 +131,39 @@ def ensure_cached(
 
     When ``run`` is True (default), spawn ``git`` via subprocess; when
     False, just return the projected status (used by tests).
+
+    Git is invoked with :data:`_GIT_ENV` overlay — no terminal prompts,
+    only ``https:``/``http:`` protocols permitted, system/global git
+    config ignored. If the destination already contains a ``.git`` but
+    the remote URL does not match the catalogued URL, we refuse to
+    pull (the path is likely attacker-controlled or stale).
     """
     entry = _entry(slug)
     base = root or CACHE_ROOT
     base.mkdir(parents=True, exist_ok=True)
     path = base / slug
+    # Refuse to descend into symlinks — a malicious cache-root injection
+    # could point ``<slug>`` at a sensitive host path.
+    if path.is_symlink():
+        return cache_status(slug, root=root)
     if run and entry.fetch_hint == "git":
         if path.exists() and (path / ".git").exists():
-            subprocess.run(
+            # Verify the remote URL matches the catalog before pulling.
+            url_check = _run_git(
+                ["git", "-C", str(path), "config", "--get", "remote.origin.url"],
+                timeout=10,
+            )
+            current_url = (url_check.stdout or b"").decode("utf-8", "replace").strip()
+            if current_url and current_url != entry.url:
+                # Catalog drift or tampering — do not pull.
+                return cache_status(slug, root=root)
+            _run_git(
                 ["git", "-C", str(path), "pull", "--ff-only"],
-                check=False,
-                capture_output=True,
                 timeout=120,
             )
         else:
-            subprocess.run(
-                ["git", "clone", "--depth", str(depth), entry.url, str(path)],
-                check=False,
-                capture_output=True,
+            _run_git(
+                ["git", "clone", "--depth", str(depth), "--", entry.url, str(path)],
                 timeout=300,
             )
     return cache_status(slug, root=root)

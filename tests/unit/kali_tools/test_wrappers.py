@@ -181,6 +181,61 @@ class TestExploitWrappers:
         assert "--level" in argv
 
 
+class TestFlagInjectionGuard:
+    """Regression tests for the ``assert_not_flag`` helper — every
+    LLM-exposed argument must reject ``-``/``--``/``@``/``+`` prefixes
+    so the binary doesn't interpret values as extra flags.
+    """
+
+    def test_nmap_target_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(network.nmap_scan, target="--script=http-shellshock")
+        assert out["ok"] is False
+        assert "nmap" in out["error"]
+        assert fake_runner.calls == []
+
+    def test_nmap_ports_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(network.nmap_scan, target="10.0.0.1", ports="-iL /etc/passwd")
+        assert out["ok"] is False
+
+    def test_subfinder_domain_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(recon.subfinder_enum, domain="--config=/tmp/evil.yaml")
+        assert out["ok"] is False
+
+    def test_nuclei_templates_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(
+            web_scan.nuclei_scan, target="https://example.com", templates="-t /etc/passwd"
+        )
+        assert out["ok"] is False
+
+    def test_sqlmap_url_at_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(exploit.sqlmap_scan, url="@/etc/passwd")
+        assert out["ok"] is False
+
+    def test_hydra_service_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(
+            credential.hydra_brute,
+            target="10.0.0.1",
+            service="-R",
+            userlist="/u",
+            passlist="/p",
+        )
+        assert out["ok"] is False
+
+    def test_crackmapexec_protocol_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(
+            credential.crackmapexec_run,
+            protocol="--module=whoami",
+            target="10.0.0.1",
+            username="alice",
+            password="secret",
+        )
+        assert out["ok"] is False
+
+    def test_katana_url_flag_rejected(self, fake_runner: FakeRunner) -> None:
+        out = _invoke(recon.katana_crawl, url="-config /tmp/x")
+        assert out["ok"] is False
+
+
 class TestCredentialWrappers:
     def test_hydra_command(self, fake_runner: FakeRunner) -> None:
         _invoke(

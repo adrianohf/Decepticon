@@ -12,10 +12,25 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
+    FlagInjectionError,
+    assert_not_flag,
     format_result,
     run_command,
     scratch_file,
 )
+
+
+def _flag_error(field: str, value: str) -> str:
+    """Return an error-envelope JSON for a rejected flag-like argument."""
+    import json as _json
+
+    return _json.dumps(
+        {
+            "ok": False,
+            "error": f"rejected flag-like argument: {field}={value!r}",
+        },
+        indent=2,
+    )
 
 
 @tool
@@ -31,6 +46,12 @@ def subfinder_enum(domain: str, timeout: float = 180.0, sources: str = "") -> st
         timeout: seconds to wait before killing the scan.
         sources: optional comma-separated subfinder source list.
     """
+    try:
+        assert_not_flag(domain, field="domain")
+        if sources:
+            assert_not_flag(sources, field="sources")
+    except FlagInjectionError as e:
+        return _flag_error("subfinder", str(e))
     out = scratch_file(".txt")
     argv = ["subfinder", "-d", domain, "-silent", "-o", str(out)]
     if sources:
@@ -54,6 +75,10 @@ def amass_enum(
     Defaults to passive enumeration (no direct queries against the
     target) so it's safe to run against scoped engagements.
     """
+    try:
+        assert_not_flag(domain, field="domain")
+    except FlagInjectionError as e:
+        return _flag_error("amass", str(e))
     out = scratch_file(".txt")
     argv = ["amass", "enum", "-d", domain, "-o", str(out)]
     if passive:
@@ -83,10 +108,15 @@ def dnsx_resolve(
     details. Feed the output path to ``kg_ingest_dnsx``.
     """
     if not hosts_file and not hosts:
-        return format_result(
-            run_command(["dnsx", "--help"], timeout=5.0),
-            extra={"error": "provide hosts_file or hosts"},
-        )
+        return _flag_error("dnsx", "provide hosts_file or hosts")
+    try:
+        if hosts_file:
+            assert_not_flag(hosts_file, field="hosts_file")
+        if hosts:
+            assert_not_flag(hosts, field="hosts")
+        assert_not_flag(record_types, field="record_types")
+    except FlagInjectionError as e:
+        return _flag_error("dnsx", str(e))
     out = scratch_file(".jsonl")
     argv = ["dnsx", "-json", "-silent", "-t", record_types, "-o", str(out)]
     if hosts_file:
@@ -117,10 +147,14 @@ def httpx_probe(
     to create host/service/entrypoint nodes in one call.
     """
     if not hosts_file and not targets:
-        return format_result(
-            run_command(["httpx", "-version"], timeout=5.0),
-            extra={"error": "provide hosts_file or targets"},
-        )
+        return _flag_error("httpx", "provide hosts_file or targets")
+    try:
+        if hosts_file:
+            assert_not_flag(hosts_file, field="hosts_file")
+        if targets:
+            assert_not_flag(targets, field="targets")
+    except FlagInjectionError as e:
+        return _flag_error("httpx", str(e))
     out = scratch_file(".jsonl")
     argv = ["httpx", "-json", "-silent", "-no-color", "-o", str(out)]
     if status_code:
@@ -155,21 +189,24 @@ def katana_crawl(
     ``kg_ingest_katana`` (see ``research/tools.py``) to turn the crawl
     into entrypoint nodes.
     """
+    try:
+        assert_not_flag(url, field="url")
+    except FlagInjectionError as e:
+        return _flag_error("katana", str(e))
     out = scratch_file(".jsonl")
-    argv = [
+    argv: list[str] = [
         "katana",
         "-u",
         url,
         "-d",
         str(depth),
-        "-jc" if js_crawl else "-d",  # -jc = enable JS crawl
         "-silent",
         "-json",
         "-o",
         str(out),
     ]
     if js_crawl:
-        argv = [a for a in argv if a != "-d" or True]  # keep -d for depth
+        argv.append("-jc")
     if headless:
         argv.append("-headless")
     result = run_command(argv, timeout=timeout)

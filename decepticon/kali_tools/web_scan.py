@@ -6,10 +6,21 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
+    FlagInjectionError,
+    assert_not_flag,
     format_result,
     run_command,
     scratch_file,
 )
+
+
+def _flag_error(tool_name: str, reason: str) -> str:
+    import json as _json
+
+    return _json.dumps(
+        {"ok": False, "error": f"{tool_name}: {reason}"},
+        indent=2,
+    )
 
 
 @tool
@@ -31,6 +42,14 @@ def nuclei_scan(
         severity: filter (``critical,high`` etc.).
         rate_limit: requests per second.
     """
+    try:
+        assert_not_flag(target, field="target")
+        if templates:
+            assert_not_flag(templates, field="templates")
+        if severity:
+            assert_not_flag(severity, field="severity")
+    except FlagInjectionError as e:
+        return _flag_error("nuclei", str(e))
     out = scratch_file(".jsonl")
     argv = [
         "nuclei",
@@ -60,6 +79,10 @@ def nuclei_scan(
 @tool
 def nikto_scan(target: str, timeout: float = 1800.0) -> str:
     """Run ``nikto`` for legacy web misconfiguration checks."""
+    try:
+        assert_not_flag(target, field="target")
+    except FlagInjectionError as e:
+        return _flag_error("nikto", str(e))
     out = scratch_file(".json")
     argv = ["nikto", "-host", target, "-Format", "json", "-output", str(out), "-ask", "no"]
     result = run_command(argv, timeout=timeout)
@@ -82,10 +105,15 @@ def ffuf_fuzz(
     ``kg_ingest_ffuf``.
     """
     if "FUZZ" not in url:
-        return format_result(
-            run_command(["ffuf", "-V"], timeout=5.0),
-            extra={"error": "url must contain FUZZ keyword"},
-        )
+        return _flag_error("ffuf", "url must contain FUZZ keyword")
+    try:
+        assert_not_flag(url, field="url")
+        assert_not_flag(wordlist, field="wordlist")
+        assert_not_flag(match_codes, field="match_codes")
+        if extensions:
+            assert_not_flag(extensions, field="extensions")
+    except FlagInjectionError as e:
+        return _flag_error("ffuf", str(e))
     out = scratch_file(".json")
     argv = [
         "ffuf",
@@ -117,6 +145,13 @@ def gobuster_dir(
     timeout: float = 900.0,
 ) -> str:
     """Run ``gobuster dir`` for directory brute-force discovery."""
+    try:
+        assert_not_flag(url, field="url")
+        assert_not_flag(wordlist, field="wordlist")
+        if extensions:
+            assert_not_flag(extensions, field="extensions")
+    except FlagInjectionError as e:
+        return _flag_error("gobuster", str(e))
     out = scratch_file(".txt")
     argv = [
         "gobuster",
@@ -146,6 +181,13 @@ def dirsearch_scan(
     timeout: float = 900.0,
 ) -> str:
     """Run ``dirsearch`` for advanced web path discovery."""
+    try:
+        assert_not_flag(url, field="url")
+        assert_not_flag(extensions, field="extensions")
+        if wordlist:
+            assert_not_flag(wordlist, field="wordlist")
+    except FlagInjectionError as e:
+        return _flag_error("dirsearch", str(e))
     out = scratch_file(".json")
     argv = ["dirsearch", "-u", url, "-e", extensions, "--format", "json", "-o", str(out), "-q"]
     if wordlist:
@@ -162,8 +204,12 @@ def testssl_scan(target: str, timeout: float = 900.0) -> str:
     Feed the JSON to ``kg_ingest_testssl`` to surface TLS findings as
     vulnerability nodes.
     """
+    try:
+        assert_not_flag(target, field="target")
+    except FlagInjectionError as e:
+        return _flag_error("testssl", str(e))
     out = scratch_file(".json")
-    argv = ["testssl.sh", "--jsonfile", str(out), "--color", "0", "--quiet", target]
+    argv = ["testssl.sh", "--jsonfile", str(out), "--color", "0", "--quiet", "--", target]
     result = run_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target})
@@ -172,7 +218,11 @@ def testssl_scan(target: str, timeout: float = 900.0) -> str:
 @tool
 def whatweb_scan(target: str, aggression: int = 3, timeout: float = 180.0) -> str:
     """Run ``whatweb`` for CMS / framework fingerprinting."""
-    argv = ["whatweb", f"--aggression={aggression}", "--log-json=-", target]
+    try:
+        assert_not_flag(target, field="target")
+    except FlagInjectionError as e:
+        return _flag_error("whatweb", str(e))
+    argv = ["whatweb", f"--aggression={aggression}", "--log-json=-", "--", target]
     result = run_command(argv, timeout=timeout)
     return format_result(result, extra={"target": target})
 
@@ -180,7 +230,11 @@ def whatweb_scan(target: str, aggression: int = 3, timeout: float = 180.0) -> st
 @tool
 def wafw00f_detect(target: str, timeout: float = 120.0) -> str:
     """Run ``wafw00f`` to detect a WAF in front of the target."""
-    argv = ["wafw00f", "-a", target]
+    try:
+        assert_not_flag(target, field="target")
+    except FlagInjectionError as e:
+        return _flag_error("wafw00f", str(e))
+    argv = ["wafw00f", "-a", "--", target]
     result = run_command(argv, timeout=timeout)
     return format_result(result, extra={"target": target})
 

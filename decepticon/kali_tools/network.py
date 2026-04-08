@@ -5,10 +5,21 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
+    FlagInjectionError,
+    assert_not_flag,
     format_result,
     run_command,
     scratch_file,
 )
+
+
+def _flag_error(tool_name: str, reason: str) -> str:
+    import json as _json
+
+    return _json.dumps(
+        {"ok": False, "error": f"{tool_name}: {reason}"},
+        indent=2,
+    )
 
 
 @tool
@@ -26,13 +37,20 @@ def nmap_scan(
     top 10,000 ports. Returns the XML path so downstream
     ``kg_ingest_nmap_xml`` can absorb the findings directly.
     """
+    try:
+        assert_not_flag(target, field="target")
+        assert_not_flag(ports, field="ports")
+        if scripts:
+            assert_not_flag(scripts, field="scripts")
+    except FlagInjectionError as e:
+        return _flag_error("nmap", str(e))
     out = scratch_file(".xml")
     argv = ["nmap", "-Pn", "-n", f"-T{timing}", "-p", ports, "-oX", str(out)]
     if service_version:
         argv.append("-sV")
     if scripts:
         argv.extend(["--script", scripts])
-    argv.append(target)
+    argv.extend(["--", target])
     result = run_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target, "ports": ports})
@@ -50,16 +68,22 @@ def masscan_scan(
     Output is JSON. Feed the path to ``kg_ingest_masscan`` to populate
     host/service nodes for follow-up nmap verification.
     """
+    try:
+        assert_not_flag(target, field="target")
+        assert_not_flag(ports, field="ports")
+    except FlagInjectionError as e:
+        return _flag_error("masscan", str(e))
     out = scratch_file(".json")
     argv = [
         "masscan",
-        target,
         "-p",
         ports,
         "--rate",
         str(rate),
         "-oJ",
         str(out),
+        "--",
+        target,
     ]
     result = run_command(argv, timeout=timeout)
     result.output_path = str(out)
@@ -79,6 +103,11 @@ def rustscan_scan(
     default, but the agent can parse the ``[tcp]`` lines to seed a
     targeted nmap follow-up.
     """
+    try:
+        assert_not_flag(target, field="target")
+        assert_not_flag(ports, field="ports")
+    except FlagInjectionError as e:
+        return _flag_error("rustscan", str(e))
     argv = [
         "rustscan",
         "-a",

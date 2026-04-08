@@ -28,6 +28,7 @@ import json
 import math
 import os
 import time
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,22 @@ NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 OSV_URL = "https://api.osv.dev/v1/query"
 EPSS_URL = "https://api.first.org/data/v1/epss"
 
-CACHE_PATH = Path(os.environ.get("DECEPTICON_CVE_CACHE", "/workspace/.cache/cve.json"))
+def _default_cache_path() -> Path:
+    """Resolve the CVE JSON cache location.
+
+    The cache must live **outside** the LLM-writable ``/workspace`` tree
+    so a poisoned engagement cannot persist fake CVE records across
+    Ralph iterations (the agent reads these records verbatim).
+    Override via ``DECEPTICON_CVE_CACHE`` for tests or alternate
+    deployments.
+    """
+    override = os.environ.get("DECEPTICON_CVE_CACHE")
+    if override:
+        return Path(override)
+    return Path.home() / ".decepticon" / "cache" / "cve.json"
+
+
+CACHE_PATH = _default_cache_path()
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 day
 MAX_CACHE_ENTRIES = 2048
 DEFAULT_TIMEOUT = 8.0
@@ -107,28 +123,64 @@ class Exploitability:
 
 
 class _Cache:
-    """Tiny JSON cache with LRU eviction — zero external deps."""
+    """Tiny JSON cache with O(1) LRU eviction.
+
+    Backed by ``collections.OrderedDict`` — promotion on ``get`` and
+    eviction on ``set`` are both O(1), replacing the previous
+    ``sorted()`` call that turned every write past the cap into an
+    O(N log N) operation on the hot path of ``lookup_cves``.
+
+    Writes to disk are **dirty-flag + explicit flush** instead of a
+    synchronous ``write_text`` on every mutation — that sync write
+    was blocking the async event loop during fan-out CVE lookups. A
+    best-effort ``atexit.register(self._save)`` covers the common
+    process-shutdown path; callers that need durability earlier can
+    call :meth:`flush` explicitly.
+    """
 
     def __init__(self, path: Path = CACHE_PATH, ttl: float = CACHE_TTL_SECONDS) -> None:
         self.path = path
         self.ttl = ttl
-        self._data: dict[str, dict[str, Any]] = {}
+        self._data: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._dirty = False
         self._load()
+        try:
+            import atexit
+
+            atexit.register(self._save_if_dirty)
+        except Exception:  # pragma: no cover — atexit always available
+            pass
 
     def _load(self) -> None:
         if not self.path.exists():
             return
         try:
-            self._data = json.loads(self.path.read_text(encoding="utf-8"))
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            self._data = {}
+            self._data = OrderedDict()
+            return
+        if isinstance(raw, dict):
+            # Preserve insertion order so the oldest (least-recently-used)
+            # entries surface first when we evict.
+            self._data = OrderedDict(raw)
 
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+            tmp.replace(self.path)
+            self._dirty = False
         except OSError as e:
             log.warning("cve cache save failed: %s", e)
+
+    def _save_if_dirty(self) -> None:
+        if self._dirty:
+            self._save()
+
+    def flush(self) -> None:
+        """Force a synchronous write of the cache to disk."""
+        self._save()
 
     def get(self, key: str) -> dict[str, Any] | None:
         entry = self._data.get(key)
@@ -136,24 +188,26 @@ class _Cache:
             return None
         if time.time() - entry.get("_ts", 0.0) > self.ttl:
             self._data.pop(key, None)
+            self._dirty = True
             return None
+        # Promote to most-recently-used (O(1) on OrderedDict).
+        self._data.move_to_end(key, last=True)
         entry["_lru"] = time.time()
         return entry.get("value")
 
     def set(self, key: str, value: dict[str, Any]) -> None:
+        now = time.time()
+        if key in self._data:
+            self._data.move_to_end(key, last=True)
         self._data[key] = {
             "value": value,
-            "_ts": time.time(),
-            "_lru": time.time(),
+            "_ts": now,
+            "_lru": now,
         }
-        if len(self._data) > MAX_CACHE_ENTRIES:
-            # Evict oldest by _lru
-            oldest = sorted(self._data.items(), key=lambda kv: kv[1].get("_lru", 0.0))[
-                : len(self._data) - MAX_CACHE_ENTRIES
-            ]
-            for k, _ in oldest:
-                self._data.pop(k, None)
-        self._save()
+        # Evict least-recently-used entries (the head of the OrderedDict).
+        while len(self._data) > MAX_CACHE_ENTRIES:
+            self._data.popitem(last=False)
+        self._dirty = True
 
 
 # ── HTTP helpers ────────────────────────────────────────────────────────

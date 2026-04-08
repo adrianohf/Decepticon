@@ -49,7 +49,11 @@ def isolated_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 def _load(result: str) -> dict:
-    return json.loads(result)
+    """Parse a tool result and unwrap the untrusted-corpus envelope when present."""
+    data = json.loads(result)
+    if isinstance(data, dict) and data.get("trust") == "untrusted-external-corpus":
+        return data.get("data", {})
+    return data
 
 
 class TestPayloadSearchTool:

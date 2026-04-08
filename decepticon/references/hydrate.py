@@ -31,9 +31,15 @@ from decepticon.references.cve_poc_index import (
     MRXN_SLUG,
     TRICKEST_SLUG,
     build_index,
+    invalidate_cache,
     save_index,
 )
 from decepticon.references.fetch import ReferenceCache, ensure_cached
+from decepticon.references.h1_corpus import invalidate_corpus_cache
+from decepticon.references.killchain import invalidate_entries_cache
+from decepticon.references.methodology import invalidate_chapters_cache
+from decepticon.references.oneliners import invalidate_recipes_cache
+from decepticon.references.payloads_ingest import invalidate_merged_cache
 
 #: Reference repos with structured indexers attached. Order matches
 #: execution order in ``hydrate_all``.
@@ -93,9 +99,17 @@ def hydrate_all(
     """
     targets = slugs if slugs is not None else INDEXED_SLUGS
     results = [_hydrate_one(slug, root) for slug in targets]
+    # Re-hydration invalidates every per-corpus memo so subsequent
+    # lookups refresh from disk.
+    invalidate_corpus_cache()
+    invalidate_entries_cache()
+    invalidate_chapters_cache()
+    invalidate_recipes_cache()
+    invalidate_merged_cache()
     if rebuild_poc_index:
         poc_touched = any(r.slug in {TRICKEST_SLUG, MRXN_SLUG} and r.present for r in results)
         if poc_touched:
+            invalidate_cache()
             try:
                 index = build_index(root=root)
                 if index.size() > 0:

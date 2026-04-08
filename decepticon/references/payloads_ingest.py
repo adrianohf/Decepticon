@@ -205,13 +205,7 @@ def iter_ingested_payloads(
     return rows
 
 
-def merged_payloads(*, root: Path | None = None) -> tuple[PayloadBundle, ...]:
-    """Return ``BUNDLED_PAYLOADS`` plus any ingested rows, deduplicated.
-
-    Deduping key is ``(vuln_class, payload)`` — the first occurrence
-    wins, so the committed curated bundle always takes precedence over
-    ingested raw wordlists.
-    """
+def _compute_merged(root: Path | None) -> tuple[PayloadBundle, ...]:
     seen: set[tuple[str, str]] = set()
     out: list[PayloadBundle] = []
     for bundle in BUNDLED_PAYLOADS:
@@ -227,6 +221,38 @@ def merged_payloads(*, root: Path | None = None) -> tuple[PayloadBundle, ...]:
         seen.add(key)
         out.append(bundle)
     return tuple(out)
+
+
+# Process-level cache keyed by the resolved PayloadsAllTheThings cache
+# path + directory mtime. Walking the repo on every call dominated
+# ``payload_search`` latency on populated systems.
+_merged_cache: dict[Path, tuple[float, tuple[PayloadBundle, ...]]] = {}
+
+
+def merged_payloads(*, root: Path | None = None) -> tuple[PayloadBundle, ...]:
+    """Return ``BUNDLED_PAYLOADS`` plus any ingested rows, deduplicated.
+
+    The result is memoized per-process keyed by the cache root path
+    and the PayloadsAllTheThings directory mtime. Re-hydrating the
+    cache invalidates the memo via mtime change.
+    """
+    try:
+        repo_path = cache_path(REPO_SLUG, root=root)
+        mtime = repo_path.stat().st_mtime if repo_path.exists() else -1.0
+    except OSError:
+        repo_path = cache_path(REPO_SLUG, root=root)
+        mtime = -1.0
+    entry = _merged_cache.get(repo_path)
+    if entry is not None and entry[0] == mtime:
+        return entry[1]
+    payloads = _compute_merged(root)
+    _merged_cache[repo_path] = (mtime, payloads)
+    return payloads
+
+
+def invalidate_merged_cache() -> None:
+    """Drop the process-level merged_payloads cache."""
+    _merged_cache.clear()
 
 
 def search_merged(

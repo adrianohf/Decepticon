@@ -9,10 +9,21 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
+    FlagInjectionError,
+    assert_not_flag,
     format_result,
     run_command,
     scratch_file,
 )
+
+
+def _flag_error(tool_name: str, reason: str) -> str:
+    import json as _json
+
+    return _json.dumps(
+        {"ok": False, "error": f"{tool_name}: {reason}"},
+        indent=2,
+    )
 
 
 @tool
@@ -35,6 +46,13 @@ def hydra_brute(
         port: override default service port (0 = default).
         threads: parallel tasks.
     """
+    try:
+        assert_not_flag(target, field="target")
+        assert_not_flag(service, field="service")
+        assert_not_flag(userlist, field="userlist")
+        assert_not_flag(passlist, field="passlist")
+    except FlagInjectionError as e:
+        return _flag_error("hydra", str(e))
     out = scratch_file(".txt")
     argv = [
         "hydra",
@@ -49,8 +67,7 @@ def hydra_brute(
     ]
     if port:
         argv.extend(["-s", str(port)])
-    argv.append(target)
-    argv.append(service)
+    argv.extend(["--", target, service])
     result = run_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target, "service": service})
@@ -74,6 +91,19 @@ def crackmapexec_run(
     authentication. ``module`` runs a named CME module; ``command``
     shells a Windows command via the remote transport.
     """
+    try:
+        assert_not_flag(protocol, field="protocol")
+        assert_not_flag(target, field="target")
+        if username:
+            assert_not_flag(username, field="username")
+        if module:
+            assert_not_flag(module, field="module")
+        # password/ntlm_hash/command MAY legitimately contain tricky
+        # characters but must not begin with a flag marker
+        if ntlm_hash:
+            assert_not_flag(ntlm_hash, field="ntlm_hash")
+    except FlagInjectionError as e:
+        return _flag_error("crackmapexec", str(e))
     binary = "crackmapexec"
     argv: list[str] = [binary, protocol, target]
     if username:
@@ -105,6 +135,15 @@ def getnpusers_asrep(
     is written to a scratch file so ``hashcat -m 18200`` can pick it
     up directly.
     """
+    try:
+        assert_not_flag(domain, field="domain")
+        assert_not_flag(dc_ip, field="dc_ip")
+        if username:
+            assert_not_flag(username, field="username")
+        if usersfile:
+            assert_not_flag(usersfile, field="usersfile")
+    except FlagInjectionError as e:
+        return _flag_error("getnpusers", str(e))
     out = scratch_file(".asrep")
     target = f"{domain}/"
     if username:
@@ -133,6 +172,12 @@ def getuserspns_kerberoast(
     crackable service accounts. Output is written to a scratch file
     for ``hashcat -m 13100``.
     """
+    try:
+        assert_not_flag(domain, field="domain")
+        assert_not_flag(username, field="username")
+        assert_not_flag(dc_ip, field="dc_ip")
+    except FlagInjectionError as e:
+        return _flag_error("getuserspns", str(e))
     out = scratch_file(".kerberoast")
     argv = [
         "impacket-GetUserSPNs",

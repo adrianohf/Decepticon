@@ -1899,15 +1899,39 @@ def kg_ingest_dnsx(path: str) -> str:
             cname_records=cname if isinstance(cname, list) else [],
         )
         hosts_added += 1
-        # Link CNAME targets as separate host nodes
+        # Link CNAME targets as separate host nodes. CNAME is an
+        # "exposes" relationship in reverse — the alias host surfaces
+        # the canonical host to the outside world. We also add the
+        # reverse ``runs_on`` edge so the chain planner can traverse
+        # aliases in either direction.
         for target in cname if isinstance(cname, list) else []:
+            target_label = str(target).lower().rstrip(".")
+            if not target_label:
+                continue
             target_host = _ensure_host_node(
                 graph,
-                label=str(target).lower().rstrip("."),
-                key=f"host::{str(target).lower().rstrip('.')}",
+                label=target_label,
+                key=f"host::{target_label}",
                 source="dnsx-cname",
             )
-            graph.upsert_edge(Edge.make(host.id, target_host.id, EdgeKind.REACHES, weight=0.5))
+            graph.upsert_edge(
+                Edge.make(
+                    host.id,
+                    target_host.id,
+                    EdgeKind.EXPOSES,
+                    weight=0.5,
+                    key=f"cname::{host_value}->{target_label}",
+                )
+            )
+            graph.upsert_edge(
+                Edge.make(
+                    target_host.id,
+                    host.id,
+                    EdgeKind.RUNS_ON,
+                    weight=0.5,
+                    key=f"cname-rev::{target_label}->{host_value}",
+                )
+            )
 
     _save(graph, out_path)
     return _json({"hosts_added": hosts_added, "stats": graph.stats()})
@@ -1964,7 +1988,11 @@ def kg_ingest_katana(path: str) -> str:
             )
         )
         graph.upsert_edge(Edge.make(host.id, url_node.id, EdgeKind.EXPOSES, weight=0.5))
-        graph.upsert_edge(Edge.make(url_node.id, ep.id, EdgeKind.EXPOSES, weight=0.4))
+        graph.upsert_edge(Edge.make(url_node.id, host.id, EdgeKind.RUNS_ON, weight=0.5))
+        graph.upsert_edge(Edge.make(host.id, ep.id, EdgeKind.EXPOSES, weight=0.4))
+        graph.upsert_edge(Edge.make(ep.id, host.id, EdgeKind.RUNS_ON, weight=0.4))
+        graph.upsert_edge(Edge.make(ep.id, url_node.id, EdgeKind.EXPOSES, weight=0.3))
+        graph.upsert_edge(Edge.make(url_node.id, ep.id, EdgeKind.RUNS_ON, weight=0.3))
         urls_added += 1
 
     _save(graph, out_path)
@@ -2060,6 +2088,7 @@ def kg_ingest_ffuf(path: str) -> str:
 
     results = data.get("results") or []
     urls_added = 0
+    entrypoints_added = 0
     for row in results:
         url = row.get("url") or ""
         if not url:
@@ -2068,12 +2097,11 @@ def kg_ingest_ffuf(path: str) -> str:
         length = int(row.get("length") or 0)
         parsed_url = urlparse(url)
         host_value = (parsed_url.hostname or "").lower()
+        host = None
         if host_value:
             host = _ensure_host_node(
                 graph, label=host_value, key=f"host::{host_value}", source="ffuf"
             )
-        else:
-            host = None
         url_node = graph.upsert_node(
             Node.make(
                 NodeKind.URL,
@@ -2084,22 +2112,46 @@ def kg_ingest_ffuf(path: str) -> str:
                 length=length,
             )
         )
+        ep = graph.upsert_node(
+            Node.make(
+                NodeKind.ENTRYPOINT,
+                url,
+                key=f"entrypoint::{url}",
+                source="ffuf",
+                host=host_value,
+                status=status,
+            )
+        )
         if host is not None:
             graph.upsert_edge(Edge.make(host.id, url_node.id, EdgeKind.EXPOSES, weight=0.5))
+            graph.upsert_edge(Edge.make(url_node.id, host.id, EdgeKind.RUNS_ON, weight=0.5))
+            graph.upsert_edge(Edge.make(host.id, ep.id, EdgeKind.EXPOSES, weight=0.4))
+            graph.upsert_edge(Edge.make(ep.id, host.id, EdgeKind.RUNS_ON, weight=0.4))
+        graph.upsert_edge(Edge.make(ep.id, url_node.id, EdgeKind.EXPOSES, weight=0.3))
+        graph.upsert_edge(Edge.make(url_node.id, ep.id, EdgeKind.RUNS_ON, weight=0.3))
         urls_added += 1
+        entrypoints_added += 1
 
     _save(graph, out_path)
-    return _json({"urls_added": urls_added, "stats": graph.stats()})
+    return _json(
+        {"urls_added": urls_added, "entrypoints_added": entrypoints_added, "stats": graph.stats()}
+    )
 
 
 @tool
-def kg_ingest_testssl(path: str) -> str:
+def kg_ingest_testssl(path: str, target: str = "") -> str:
     """Ingest testssl.sh JSON output as TLS vulnerability nodes.
 
     testssl.sh emits an array of findings with ``id``, ``severity``,
     ``finding`` fields. We map the severity labels onto the graph's
     ``Severity`` enum and create a VULNERABILITY node per HIGH/CRIT
-    finding.
+    finding, linked to a HOST node derived from ``target`` (``host`` or
+    ``host:port``) so the chain planner can follow testssl findings.
+
+    If ``target`` is empty, we try to read it from the testssl JSON
+    envelope (``targetHost``/``target``). Vulnerability nodes are still
+    created when no host is resolvable, but they won't participate in
+    attack-chain traversal — prefer to pass ``target`` explicitly.
     """
     graph, out_path = _load()
     p = Path(path)
@@ -2112,18 +2164,37 @@ def kg_ingest_testssl(path: str) -> str:
         return _json({"error": f"failed to parse testssl json: {e}"})
 
     rows: list[dict[str, Any]] = []
+    envelope_target = ""
     if isinstance(data, list):
         rows = [r for r in data if isinstance(r, dict)]
     elif isinstance(data, dict):
+        envelope_target = str(data.get("targetHost") or data.get("target") or "").strip()
         # Newer testssl wraps everything in {"scanResult": [...]}
         scan_result = data.get("scanResult")
         if isinstance(scan_result, list):
             for entry in scan_result:
                 if not isinstance(entry, dict):
                     continue
+                if not envelope_target:
+                    envelope_target = str(
+                        entry.get("targetHost") or entry.get("target") or ""
+                    ).strip()
                 section = entry.get("vulnerabilities") or entry.get("serverDefaults") or []
                 if isinstance(section, list):
                     rows.extend(r for r in section if isinstance(r, dict))
+
+    # Resolve the host label: explicit arg > envelope target > none
+    host_label = (target or envelope_target).strip()
+    host_node = None
+    if host_label:
+        # Strip port suffix for the graph host key
+        bare_host = host_label.split(":", 1)[0].lower()
+        host_node = _ensure_host_node(
+            graph,
+            label=bare_host,
+            key=f"host::{bare_host}",
+            source="testssl",
+        )
 
     severity_map = {
         "CRITICAL": Severity.CRITICAL,
@@ -2135,6 +2206,7 @@ def kg_ingest_testssl(path: str) -> str:
         "OK": Severity.INFO,
     }
     vulns_added = 0
+    linked = 0
     for row in rows:
         sev_raw = str(row.get("severity") or "INFO").upper()
         severity = severity_map.get(sev_raw, Severity.INFO)
@@ -2142,7 +2214,8 @@ def kg_ingest_testssl(path: str) -> str:
             continue
         rule_id = str(row.get("id") or "testssl.finding")
         finding = str(row.get("finding") or "").strip()
-        key = f"testssl::{rule_id}::{finding[:48]}"
+        scope = host_label or "unscoped"
+        key = f"testssl::{scope}::{rule_id}::{finding[:48]}"
         vuln = graph.upsert_node(
             Node.make(
                 NodeKind.VULNERABILITY,
@@ -2152,15 +2225,23 @@ def kg_ingest_testssl(path: str) -> str:
                 rule_id=rule_id,
                 severity=severity.value,
                 description=finding,
+                target=host_label,
             )
         )
         vulns_added += 1
-        del vuln  # Not linked to a host node — testssl.sh output does
-        # not always carry the target identity, and the agent has
-        # context about which host it scanned.
+        if host_node is not None:
+            graph.upsert_edge(Edge.make(host_node.id, vuln.id, EdgeKind.HAS_VULN, weight=0.6))
+            linked += 1
 
     _save(graph, out_path)
-    return _json({"vulns_added": vulns_added, "stats": graph.stats()})
+    return _json(
+        {
+            "vulns_added": vulns_added,
+            "linked_to_host": linked,
+            "host": host_label,
+            "stats": graph.stats(),
+        }
+    )
 
 
 @tool
@@ -2243,12 +2324,16 @@ def kg_ingest_asrep_hashes(path: str, domain: str = "") -> str:
         line = line.strip()
         if not line.startswith("$krb5asrep$"):
             continue
+        # Format: $krb5asrep$23$USER@DOMAIN:SALT$ENCRYPTED_TIMESTAMP
+        # split("$", 4) →
+        #   [0]=''  [1]='krb5asrep'  [2]='23'
+        #   [3]='USER@DOMAIN:SALT'   [4]='ENCRYPTED_TIMESTAMP'
         after_dollars = line.split("$", 4)
         if len(after_dollars) < 5:
             continue
-        user_part = after_dollars[4].split(":")[0]
-        user = user_part.split("@")[0]
-        dom = user_part.split("@")[1] if "@" in user_part else domain
+        user_part = after_dollars[3].split(":", 1)[0]
+        user = user_part.split("@", 1)[0]
+        dom = user_part.split("@", 1)[1] if "@" in user_part else domain
         label = f"{dom}\\{user}" if dom else user
         graph.upsert_node(
             Node.make(
