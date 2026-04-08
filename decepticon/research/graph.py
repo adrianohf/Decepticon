@@ -147,7 +147,14 @@ class Edge(BaseModel):
         weight: float = 1.0,
         **props: Any,
     ) -> Edge:
-        digest = hashlib.sha1(f"{src}->{kind.value}->{dst}".encode()).hexdigest()[:16]
+        # ``key`` in props participates in the deterministic edge ID so
+        # multiple edges of the same kind between the same (src, dst)
+        # can coexist (e.g. AD GetChanges + GetChangesAll both mapped
+        # to LEAKS but semantically distinct).
+        key = props.get("key", "")
+        digest = hashlib.sha1(
+            f"{src}->{kind.value}->{dst}::{key}".encode()
+        ).hexdigest()[:16]
         return cls(id=digest, src=src, dst=dst, kind=kind, weight=weight, props=dict(props))
 
 

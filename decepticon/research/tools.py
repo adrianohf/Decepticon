@@ -16,6 +16,7 @@ LangChain tool return contract and keeps LLM token usage low.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -25,12 +26,15 @@ from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
+from decepticon.contracts.patterns import scan_solidity_source
+from decepticon.contracts.slither import ingest_slither_file
 from decepticon.core.logging import get_logger
 from decepticon.research import cve as cve_mod
 from decepticon.research import fuzz as fuzz_mod
 from decepticon.research.chain import critical_path_score, plan_chains, promote_chain
 from decepticon.research.graph import (
     DEFAULT_PATH,
+    SEVERITY_SCORE,
     Edge,
     EdgeKind,
     KnowledgeGraph,
@@ -41,6 +45,13 @@ from decepticon.research.graph import (
     save_graph,
 )
 from decepticon.research.sarif import ingest_sarif_file
+from decepticon.reversing.binary import identify_binary
+from decepticon.reversing.packer import detect_packer
+from decepticon.reversing.strings import extract_strings, group_by_category
+from decepticon.reversing.symbols import summarize_symbols
+from decepticon.web.jwt import parse_token
+from decepticon.web.oauth import analyze_oauth_callback
+from decepticon.web.session import analyze_cookie
 
 log = get_logger("research.tools")
 
@@ -109,6 +120,32 @@ def _severity_from_string(value: str | None) -> Severity:
 
 def _is_web_port(port: int) -> bool:
     return port in {80, 81, 443, 3000, 5000, 7001, 8000, 8008, 8080, 8443, 8888}
+
+
+def _severity_threshold(sev: Severity) -> float:
+    return SEVERITY_SCORE.get(sev, 0.0)
+
+
+def _jwt_finding_severity(finding: str) -> Severity:
+    text = finding.lower()
+    if "alg=none" in text:
+        return Severity.CRITICAL
+    if "key confusion" in text or "path traversal" in text:
+        return Severity.HIGH
+    if "no exp" in text or "expired" in text:
+        return Severity.MEDIUM
+    return Severity.LOW
+
+
+def _cookie_finding_severity(finding: str) -> Severity:
+    text = finding.lower()
+    if "predictable session" in text:
+        return Severity.HIGH
+    if "httponly not set" in text or "samesite" in text:
+        return Severity.MEDIUM
+    if "secure flag not set" in text:
+        return Severity.MEDIUM
+    return Severity.LOW
 
 
 def _ensure_host_node(
@@ -695,7 +732,9 @@ def kg_ingest_nmap_xml(path: str, scanner_hint: str = "nmap") -> str:
         if status is not None and status.get("state") not in {None, "up"}:
             continue
 
-        addr_el = host_el.find("address[@addrtype='ipv4']") or host_el.find("address")
+        addr_el = host_el.find("address[@addrtype='ipv4']")
+        if addr_el is None:
+            addr_el = host_el.find("address")
         if addr_el is None:
             continue
         ip = addr_el.get("addr")
@@ -917,6 +956,466 @@ def kg_ingest_subfinder(path: str, root_domain: str = "") -> str:
     return _json(
         {
             "domains_added": domains_added,
+            "entrypoints_added": entrypoints_added,
+            "stats": graph.stats(),
+        }
+    )
+
+
+# ── Web/Auth signal ingestion ──────────────────────────────────────────
+
+
+@tool
+def kg_analyze_jwt(token: str, source: str = "") -> str:
+    """Parse a JWT and lift suspicious indicators into graph vulnerabilities."""
+    parsed = parse_token(token)
+    token_hash = hashlib.sha1(token.encode("utf-8")).hexdigest()[:12]
+
+    graph, out_path = _load()
+    entrypoint: Node | None = None
+
+    if source:
+        parsed_source = urlparse(source)
+        if parsed_source.scheme and parsed_source.netloc:
+            entrypoint = graph.upsert_node(
+                Node.make(
+                    NodeKind.ENTRYPOINT,
+                    source,
+                    key=f"entrypoint::{source}",
+                    source="jwt-analysis",
+                    scheme=parsed_source.scheme,
+                    host=parsed_source.hostname,
+                    port=parsed_source.port,
+                )
+            )
+        else:
+            entrypoint = graph.upsert_node(
+                Node.make(
+                    NodeKind.FINDING,
+                    source,
+                    key=f"context::{source}",
+                    source="jwt-analysis",
+                )
+            )
+
+    created = 0
+    finding_nodes: list[dict[str, Any]] = []
+    for idx, finding in enumerate(parsed.findings, start=1):
+        severity = _jwt_finding_severity(finding)
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[jwt] {finding}",
+                key=f"jwt::{token_hash}::{idx}",
+                scanner="jwt-analysis",
+                severity=severity.value,
+                finding=finding,
+                source=source or None,
+                alg=parsed.header.alg,
+                kid=parsed.header.kid,
+                jku=parsed.header.jku,
+            )
+        )
+        if entrypoint is not None:
+            graph.upsert_edge(Edge.make(entrypoint.id, vuln.id, EdgeKind.HAS_VULN, weight=0.4))
+        finding_nodes.append(
+            {
+                "id": vuln.id,
+                "severity": severity.value,
+                "finding": finding,
+            }
+        )
+        created += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "token_hash": token_hash,
+            "header": parsed.header.to_dict(),
+            "claims": parsed.claims.to_dict(),
+            "findings": parsed.findings,
+            "ingested_vulnerabilities": created,
+            "nodes": finding_nodes,
+            "stats": graph.stats(),
+        }
+    )
+
+
+@tool
+def kg_analyze_oauth_callback(
+    callback_url: str,
+    initial_request_url: str = "",
+    public_client: bool = False,
+    source: str = "",
+) -> str:
+    """Analyze OAuth/OIDC callback flow and ingest findings."""
+    findings = analyze_oauth_callback(
+        callback_url=callback_url,
+        initial_request_url=initial_request_url or None,
+        public_client=public_client,
+    )
+
+    graph, out_path = _load()
+    entry_label = source or callback_url
+    parsed_source = urlparse(entry_label)
+    entrypoint = graph.upsert_node(
+        Node.make(
+            NodeKind.ENTRYPOINT,
+            entry_label,
+            key=f"entrypoint::{entry_label}",
+            source="oauth-analysis",
+            scheme=parsed_source.scheme or None,
+            host=parsed_source.hostname or None,
+            port=parsed_source.port,
+        )
+    )
+
+    ingested: list[dict[str, Any]] = []
+    for finding in findings:
+        severity = _severity_from_string(finding.severity)
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[oauth:{finding.id}] {finding.title}",
+                key=f"oauth::{finding.id}::{entry_label}",
+                scanner="oauth-analysis",
+                rule_id=finding.id,
+                severity=severity.value,
+                description=finding.detail,
+                recommendation=finding.recommendation,
+            )
+        )
+        graph.upsert_edge(Edge.make(entrypoint.id, vuln.id, EdgeKind.HAS_VULN, weight=0.4))
+        ingested.append(
+            {
+                "id": vuln.id,
+                "rule_id": finding.id,
+                "severity": severity.value,
+                "title": finding.title,
+            }
+        )
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "callback_url": callback_url,
+            "findings": [f.to_dict() for f in findings],
+            "ingested_vulnerabilities": len(ingested),
+            "nodes": ingested,
+            "stats": graph.stats(),
+        }
+    )
+
+
+@tool
+def kg_analyze_cookie_value(
+    name: str,
+    value: str,
+    secure: bool = False,
+    http_only: bool = False,
+    same_site: str = "",
+    source: str = "",
+) -> str:
+    """Analyze a cookie/session token and persist suspicious findings."""
+    analysis = analyze_cookie(
+        name=name,
+        value=value,
+        secure=secure,
+        http_only=http_only,
+        same_site=(same_site or None),
+    )
+
+    graph, out_path = _load()
+    entrypoint: Node | None = None
+    if source:
+        parsed_source = urlparse(source)
+        if parsed_source.scheme and parsed_source.netloc:
+            entrypoint = graph.upsert_node(
+                Node.make(
+                    NodeKind.ENTRYPOINT,
+                    source,
+                    key=f"entrypoint::{source}",
+                    source="cookie-analysis",
+                    scheme=parsed_source.scheme,
+                    host=parsed_source.hostname,
+                    port=parsed_source.port,
+                )
+            )
+
+    created: list[dict[str, Any]] = []
+    cookie_hash = hashlib.sha1(f"{name}:{value}".encode("utf-8")).hexdigest()[:12]
+    for idx, finding in enumerate(analysis.findings, start=1):
+        severity = _cookie_finding_severity(finding)
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[cookie:{name}] {finding}",
+                key=f"cookie::{cookie_hash}::{idx}",
+                scanner="cookie-analysis",
+                severity=severity.value,
+                cookie_name=name,
+                framework=analysis.framework,
+                cookie_format=analysis.format,
+                source=source or None,
+            )
+        )
+        if entrypoint is not None:
+            graph.upsert_edge(Edge.make(entrypoint.id, vuln.id, EdgeKind.HAS_VULN, weight=0.5))
+        created.append({"id": vuln.id, "severity": severity.value, "finding": finding})
+
+    if analysis.format == "jwt" and isinstance(analysis.decoded, dict):
+        secret = graph.upsert_node(
+            Node.make(
+                NodeKind.SECRET,
+                f"cookie::{name}",
+                key=f"cookie-secret::{cookie_hash}",
+                source="cookie-analysis",
+                format="jwt",
+                decoded=analysis.decoded,
+            )
+        )
+        if entrypoint is not None:
+            graph.upsert_edge(Edge.make(entrypoint.id, secret.id, EdgeKind.LEAKS, weight=0.5))
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "analysis": analysis.to_dict(),
+            "ingested_vulnerabilities": len(created),
+            "nodes": created,
+            "stats": graph.stats(),
+        }
+    )
+
+
+# ── Smart contract ingestion ───────────────────────────────────────────
+
+
+@tool
+def kg_scan_solidity(path: str, min_severity: str = "low", scanner_hint: str = "solidity-patterns") -> str:
+    """Scan Solidity source with offline heuristics and ingest findings."""
+    source_path = Path(path)
+    if not source_path.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return _json({"error": f"failed to read solidity file: {e}"})
+
+    findings = scan_solidity_source(source)
+    threshold = _severity_threshold(_severity_from_string(min_severity))
+
+    graph, out_path = _load()
+    ingested = 0
+    by_severity: dict[str, int] = {}
+
+    file_node = graph.upsert_node(
+        Node.make(
+            NodeKind.FILE,
+            str(source_path),
+            key=f"file::{source_path}",
+            source=scanner_hint,
+            language="solidity",
+        )
+    )
+
+    for finding in findings:
+        if _severity_threshold(finding.severity) < threshold:
+            continue
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[{scanner_hint}:{finding.rule}] {source_path.name}:{finding.line}",
+                key=f"{scanner_hint}::{source_path}::{finding.rule}::{finding.line}",
+                scanner=scanner_hint,
+                rule_id=finding.rule,
+                severity=finding.severity.value,
+                description=finding.description,
+                recommendation=finding.recommendation,
+                cwe=[finding.cwe] if finding.cwe else [],
+                file=str(source_path),
+                line=finding.line,
+            )
+        )
+        loc = graph.upsert_node(
+            Node.make(
+                NodeKind.CODE_LOCATION,
+                f"{source_path}:{finding.line}",
+                key=f"{source_path}::{finding.line}",
+                file=str(source_path),
+                start_line=finding.line,
+            )
+        )
+        graph.upsert_edge(Edge.make(vuln.id, loc.id, EdgeKind.DEFINED_IN))
+        graph.upsert_edge(Edge.make(loc.id, file_node.id, EdgeKind.LOCATED_AT))
+        by_severity[finding.severity.value] = by_severity.get(finding.severity.value, 0) + 1
+        ingested += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "file": str(source_path),
+            "matches": len(findings),
+            "ingested": ingested,
+            "by_severity": by_severity,
+            "stats": graph.stats(),
+        }
+    )
+
+
+@tool
+def kg_ingest_slither(path: str) -> str:
+    """Ingest Slither JSON output into the knowledge graph."""
+    graph, out_path = _load()
+    ingested = ingest_slither_file(path, graph)
+    _save(graph, out_path)
+    return _json({"ingested": ingested, "stats": graph.stats()})
+
+
+# ── Binary triage ingestion ────────────────────────────────────────────
+
+
+@tool
+def kg_triage_binary(path: str, max_strings: int = 400) -> str:
+    """Triage a binary for exploit-relevant signals and persist graph entities."""
+    binary_path = Path(path)
+    if not binary_path.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    try:
+        blob = binary_path.read_bytes()
+    except OSError as e:
+        return _json({"error": f"failed to read binary: {e}"})
+
+    info = identify_binary(binary_path)
+    packer = detect_packer(blob)
+    extracted = extract_strings(blob)
+    if max_strings > 0:
+        extracted = extracted[:max_strings]
+    grouped = group_by_category(extracted)
+    import_tokens: list[str] = []
+    for entry in grouped.get("import", []):
+        for token in re.split(r"[^A-Za-z0-9_@.]+", entry.text):
+            if token:
+                import_tokens.append(token)
+    symbols = summarize_symbols(import_tokens)
+
+    graph, out_path = _load()
+    file_node = graph.upsert_node(
+        Node.make(
+            NodeKind.FILE,
+            str(binary_path),
+            key=f"binary::{binary_path}",
+            source="binary-triage",
+            binary_format=info.format,
+            architecture=info.architecture,
+            bitness=info.bitness,
+            nx=info.nx,
+            pie=info.pie,
+            relro=info.relro,
+            canary=info.canary,
+            packed=packer.likely_packed,
+            entropy=round(packer.entropy, 3),
+        )
+    )
+
+    created: list[dict[str, Any]] = []
+
+    def _add_binary_vuln(rule_id: str, severity: Severity, description: str, **props: Any) -> None:
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[binary:{rule_id}] {binary_path.name}",
+                key=f"binary::{binary_path}::{rule_id}",
+                scanner="binary-triage",
+                rule_id=rule_id,
+                severity=severity.value,
+                description=description,
+                file=str(binary_path),
+                **props,
+            )
+        )
+        graph.upsert_edge(Edge.make(file_node.id, vuln.id, EdgeKind.HAS_VULN, weight=0.6))
+        created.append({"id": vuln.id, "rule_id": rule_id, "severity": severity.value})
+
+    if info.nx is False:
+        _add_binary_vuln(
+            "hardening.nx-disabled",
+            Severity.MEDIUM,
+            "NX appears disabled; memory corruption is easier to weaponize.",
+        )
+    if info.pie is False:
+        _add_binary_vuln(
+            "hardening.pie-disabled",
+            Severity.MEDIUM,
+            "PIE appears disabled; ASLR entropy is reduced for code pointers.",
+        )
+    if grouped.get("secret"):
+        sample = [s.text[:80] for s in grouped["secret"][:5]]
+        _add_binary_vuln(
+            "secrets.hardcoded",
+            Severity.HIGH,
+            "Potential hardcoded secrets were found in binary strings.",
+            sample=sample,
+        )
+    if symbols.command_exec and (symbols.dangerous_c or symbols.dynamic_code):
+        sev = Severity.CRITICAL if symbols.network else Severity.HIGH
+        _add_binary_vuln(
+            "rce.primitives",
+            sev,
+            "Binary imports command-execution primitives plus memory-unsafe APIs.",
+            command_exec=symbols.command_exec,
+            dangerous_c=symbols.dangerous_c,
+            dynamic_code=symbols.dynamic_code,
+            network=symbols.network,
+        )
+
+    if packer.likely_packed:
+        hypothesis = graph.upsert_node(
+            Node.make(
+                NodeKind.HYPOTHESIS,
+                f"Packed binary candidate: {binary_path.name}",
+                key=f"binary-packed::{binary_path}",
+                source="binary-triage",
+                entropy=round(packer.entropy, 3),
+                signatures=packer.signatures,
+                notes=packer.notes,
+            )
+        )
+        graph.upsert_edge(Edge.make(file_node.id, hypothesis.id, EdgeKind.CONTAINS, weight=1.2))
+
+    entrypoints_added = 0
+    for s in grouped.get("url", [])[:25]:
+        url_node = graph.upsert_node(
+            Node.make(
+                NodeKind.URL,
+                s.text,
+                key=f"url::{s.text}",
+                source="binary-triage",
+                offset=s.offset,
+            )
+        )
+        ep = graph.upsert_node(
+            Node.make(
+                NodeKind.ENTRYPOINT,
+                s.text,
+                key=f"entrypoint::{s.text}",
+                source="binary-triage",
+            )
+        )
+        graph.upsert_edge(Edge.make(file_node.id, url_node.id, EdgeKind.CONTAINS, weight=0.8))
+        graph.upsert_edge(Edge.make(url_node.id, ep.id, EdgeKind.EXPOSES, weight=0.7))
+        entrypoints_added += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "binary": info.to_dict(),
+            "packer": packer.to_dict(),
+            "string_category_counts": {k: len(v) for k, v in grouped.items()},
+            "symbol_report": symbols.to_dict(),
+            "created_vulnerabilities": created,
             "entrypoints_added": entrypoints_added,
             "stats": graph.stats(),
         }
@@ -1229,6 +1728,12 @@ RESEARCH_TOOLS = [
     kg_ingest_nuclei_jsonl,
     kg_ingest_subfinder,
     kg_ingest_sarif,
+    kg_analyze_jwt,
+    kg_analyze_oauth_callback,
+    kg_analyze_cookie_value,
+    kg_scan_solidity,
+    kg_ingest_slither,
+    kg_triage_binary,
     cve_lookup,
     cve_by_package,
     cve_enrich_dependencies,
