@@ -1,15 +1,15 @@
 """Reference repository fetcher + local search.
 
-Clones (or pulls) any of the catalogued repositories into the sandbox
-workspace under ``/workspace/.references/<slug>/`` so agents can grep
-through the full contents offline after the first fetch.
+Clones (or pulls) any of the catalogued repositories into the per-user
+cache under ``~/.decepticon/references/<slug>/`` (override via
+``DECEPTICON_REFERENCES_ROOT``) so agents can grep through the full
+contents offline after the first fetch.
 
-The fetcher uses git via subprocess; the actual clone happens through
-the bash tool, NOT directly here — this module is pure metadata + a
-path manager so tests can cover logic without requiring network.
+The fetcher uses git via subprocess; tests pass ``run=False`` to avoid
+network and use ``root=tmp_path`` to stay out of the real cache.
 
-Search is a ripgrep / grep wrapper via subprocess that the agent
-invokes through bash; we just produce the right command line here.
+Search is a ripgrep / grep wrapper via subprocess with a pure-Python
+fallback when neither binary is installed.
 """
 
 from __future__ import annotations
@@ -22,7 +22,15 @@ from typing import Any
 
 from decepticon.references.catalog import REFERENCES, ReferenceEntry
 
-CACHE_ROOT = Path(os.environ.get("DECEPTICON_REFERENCES_ROOT", "/workspace/.references"))
+
+def _default_cache_root() -> Path:
+    override = os.environ.get("DECEPTICON_REFERENCES_ROOT")
+    if override:
+        return Path(override)
+    return Path.home() / ".decepticon" / "references"
+
+
+CACHE_ROOT = _default_cache_root()
 
 
 @dataclass
