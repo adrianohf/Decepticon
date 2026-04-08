@@ -208,7 +208,11 @@ class GraphQLSchema:
 
         arg_strs: list[str] = []
         for name, meta in fld.args.items():
-            placeholder = self._placeholder(meta["type"])
+            placeholder = self._placeholder(
+                meta["type"],
+                is_list=bool(meta["is_list"]),
+                non_null=bool(meta["non_null"]),
+            )
             arg_strs.append(f"{name}: {placeholder}")
 
         selection = self._default_selection(fld.return_type, depth=2)
@@ -221,7 +225,18 @@ class GraphQLSchema:
         head += " }"
         return head
 
-    def _placeholder(self, type_name: str) -> str:
+    def _placeholder(
+        self,
+        type_name: str,
+        *,
+        is_list: bool = False,
+        non_null: bool = False,
+        depth: int = 4,
+    ) -> str:
+        if is_list:
+            item = self._placeholder(type_name, depth=depth - 1)
+            return f"[{item}]"
+
         lower = type_name.lower()
         if lower in ("int", "float"):
             return "1"
@@ -231,8 +246,34 @@ class GraphQLSchema:
             return '"1"'
         if lower == "string":
             return '"test"'
-        # Input object or enum — use null which may or may not be accepted
-        return "null"
+
+        type_meta = self._type(type_name)
+        kind = type_meta.get("kind")
+        if kind == "ENUM":
+            enum_values = type_meta.get("enumValues") or []
+            first = enum_values[0]["name"] if enum_values else None
+            return first or "null"
+        if kind == "INPUT_OBJECT":
+            if depth <= 0:
+                return "{}" if non_null else "null"
+            required_fields: list[str] = []
+            for field in type_meta.get("inputFields") or []:
+                field_type, field_is_list, field_non_null = _unwrap_type(field.get("type"))
+                if not field_non_null:
+                    continue
+                child = self._placeholder(
+                    field_type,
+                    is_list=field_is_list,
+                    non_null=field_non_null,
+                    depth=depth - 1,
+                )
+                required_fields.append(f"{field['name']}: {child}")
+            if required_fields:
+                return "{ " + ", ".join(required_fields) + " }"
+            return "{}" if non_null else "null"
+        if kind == "SCALAR":
+            return '"test"'
+        return '"test"' if non_null else "null"
 
     def _default_selection(self, type_name: str, *, depth: int) -> str:
         if depth <= 0:

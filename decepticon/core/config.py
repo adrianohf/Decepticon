@@ -74,8 +74,8 @@ class DecepticonConfig(BaseSettings):
 
     debug: bool = False
     model_profile: ModelProfile = ModelProfile.ECO
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-    docker: DockerConfig = Field(default_factory=DockerConfig)
+    llm: LLMConfig = Field(default_factory=lambda: LLMConfig())
+    docker: DockerConfig = Field(default_factory=lambda: DockerConfig())
 
 
 def load_config() -> DecepticonConfig:

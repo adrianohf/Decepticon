@@ -141,7 +141,6 @@ reportImplicitStringConcatenation = "none"
 reportPrivateUsage = "none"
 reportImportCycles = "none"
 reportPropertyTypeMismatch = "none"
-reportShadowedImports = "none"
 reportIgnoreCommentWithoutRule = "none"
 # Demote pre-existing issues to warnings (still surfaced, but non-blocking).
 # Real attribute-access bugs in newly-written code should still be caught:

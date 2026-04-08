@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from decepticon.references import fetch as fetch_mod
 from decepticon.references.catalog import (
     REFERENCES,
     references_by_category,
@@ -16,6 +18,7 @@ from decepticon.references.fetch import (
     cache_path,
     cache_status,
     ensure_cached,
+    search_cache,
 )
 from decepticon.references.payloads import (
     BUNDLED_PAYLOADS,
@@ -137,3 +140,39 @@ class TestFetchCache:
     def test_unknown_slug_raises(self) -> None:
         with pytest.raises(KeyError):
             cache_path("does-not-exist")
+
+    def test_search_cache_passes_pattern_after_double_dash(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "hackerone-reports"
+        repo.mkdir(parents=True)
+        (repo / "README.md").write_text("hello\n", encoding="utf-8")
+
+        captured: dict[str, list[str]] = {}
+
+        def fake_run(
+            cmd: list[str],
+            *,
+            capture_output: bool,
+            timeout: int,
+            text: bool,
+            errors: str,
+        ) -> SimpleNamespace:
+            captured["cmd"] = cmd
+            return SimpleNamespace(stdout="")
+
+        monkeypatch.setattr(fetch_mod, "_which", lambda binary: binary == "rg")
+        monkeypatch.setattr(fetch_mod.subprocess, "run", fake_run)
+
+        assert search_cache("hackerone-reports", "--hidden", root=tmp_path) == []
+        assert captured["cmd"] == [
+            "rg",
+            "-n",
+            "--max-count",
+            "3",
+            "--",
+            "--hidden",
+            str(repo),
+        ]

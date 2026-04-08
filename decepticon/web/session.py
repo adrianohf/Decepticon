@@ -94,8 +94,16 @@ def shannon_entropy(s: str) -> float:
 
 
 def _classify(value: str) -> dict[str, int]:
+    """Bucket cookie characters.
+
+    ``hex`` is tracked as an additional signal count rather than a mutually
+    exclusive bucket so obviously hex-encoded cookies remain visible even
+    though their characters are also lowercase/uppercase/digits.
+    """
     classes = {"lower": 0, "upper": 0, "digit": 0, "base64": 0, "hex": 0, "other": 0}
     for ch in value:
+        if ch in "0123456789abcdefABCDEF":
+            classes["hex"] += 1
         if ch.islower():
             classes["lower"] += 1
         elif ch.isupper():
@@ -104,8 +112,6 @@ def _classify(value: str) -> dict[str, int]:
             classes["digit"] += 1
         elif ch in "+/=-_":
             classes["base64"] += 1
-        elif ch in "abcdefABCDEF":
-            classes["hex"] += 1
         else:
             classes["other"] += 1
     return classes

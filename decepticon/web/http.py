@@ -96,11 +96,14 @@ class HTTPHistory:
 
     def __init__(self, maxlen: int = MAX_HISTORY) -> None:
         self._entries: deque[tuple[HTTPRequest, HTTPResponse | None]] = deque(maxlen=maxlen)
-        self._by_id: dict[str, int] = {}
+        self._by_id: dict[str, tuple[HTTPRequest, HTTPResponse | None]] = {}
 
     def record(self, req: HTTPRequest, resp: HTTPResponse | None = None) -> None:
+        if self._entries.maxlen is not None and len(self._entries) >= self._entries.maxlen:
+            evicted_req, _ = self._entries.popleft()
+            self._by_id.pop(evicted_req.id, None)
         self._entries.append((req, resp))
-        self._by_id[req.id] = len(self._entries) - 1
+        self._by_id[req.id] = (req, resp)
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -109,10 +112,7 @@ class HTTPHistory:
         return iter(self._entries)
 
     def get_by_id(self, request_id: str) -> tuple[HTTPRequest, HTTPResponse | None] | None:
-        for req, resp in self._entries:
-            if req.id == request_id:
-                return req, resp
-        return None
+        return self._by_id.get(request_id)
 
     def search(
         self,

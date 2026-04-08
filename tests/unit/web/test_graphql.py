@@ -143,3 +143,63 @@ def test_type_unwrapping_handles_non_null_lists() -> None:
     schema = GraphQLSchema.from_introspection(_intr(types))
     q = schema.generate_query("items")
     assert q.startswith("query {")
+
+
+def test_generate_query_populates_required_input_objects_and_enums() -> None:
+    types = [
+        {
+            "kind": "OBJECT",
+            "name": "Mutation",
+            "fields": [
+                {
+                    "name": "createUser",
+                    "args": [
+                        {
+                            "name": "input",
+                            "type": {
+                                "kind": "NON_NULL",
+                                "ofType": {"kind": "INPUT_OBJECT", "name": "CreateUserInput"},
+                            },
+                        }
+                    ],
+                    "type": {"kind": "OBJECT", "name": "User"},
+                    "isDeprecated": False,
+                }
+            ],
+        },
+        {
+            "kind": "INPUT_OBJECT",
+            "name": "CreateUserInput",
+            "inputFields": [
+                {
+                    "name": "email",
+                    "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "String"}},
+                },
+                {
+                    "name": "role",
+                    "type": {"kind": "NON_NULL", "ofType": {"kind": "ENUM", "name": "Role"}},
+                },
+            ],
+        },
+        {
+            "kind": "ENUM",
+            "name": "Role",
+            "enumValues": [{"name": "ADMIN"}],
+        },
+        {
+            "kind": "OBJECT",
+            "name": "User",
+            "fields": [
+                {
+                    "name": "id",
+                    "args": [],
+                    "type": {"kind": "SCALAR", "name": "ID"},
+                    "isDeprecated": False,
+                }
+            ],
+        },
+    ]
+    schema = GraphQLSchema.from_introspection(_intr(types))
+    q = schema.generate_query("createUser", kind="mutation")
+    assert 'input: { email: "test", role: ADMIN }' in q
+    assert "{ id }" in q

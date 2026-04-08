@@ -143,12 +143,13 @@ def search_cache(
     for binary in ("rg", "grep"):
         if _which(binary):
             cmd = (
-                [binary, "-n", "--max-count", "3", pattern, str(status.path)]
+                [binary, "-n", "--max-count", "3", "--", pattern, str(status.path)]
                 if binary == "rg"
                 else [
                     "grep",
                     "-rn",
                     "--include=*",
+                    "--",
                     pattern,
                     str(status.path),
                 ]
