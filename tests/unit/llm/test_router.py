@@ -7,6 +7,7 @@ from decepticon.llm.models import (
     GPT_5,
     HAIKU,
     OPUS,
+    SONNET,
     LLMModelMapping,
     ModelAssignment,
 )
@@ -47,3 +48,8 @@ class TestModelRouter:
         assert isinstance(assignment, ModelAssignment)
         assert assignment.primary == HAIKU
         assert assignment.temperature == 0.3
+
+    def test_resolve_analyst_role(self):
+        chain = self.router.resolve_with_fallback("analyst")
+        assert chain[0] == SONNET
+        assert chain[1] == OPUS

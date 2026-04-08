@@ -32,6 +32,7 @@ from decepticon.core.config import load_config
 from decepticon.llm import LLMFactory
 from decepticon.middleware import SafeCommandMiddleware
 from decepticon.middleware.skills import DecepticonSkillsMiddleware
+from decepticon.research.tools import RESEARCH_TOOLS
 from decepticon.tools.bash import bash
 from decepticon.tools.bash.bash import set_sandbox
 
@@ -86,10 +87,12 @@ def create_recon_agent():
         ]
     )
 
+    tools = [*RESEARCH_TOOLS, bash]
+
     agent = create_agent(
         llm,
         system_prompt=system_prompt,
-        tools=[bash],
+        tools=tools,
         middleware=middleware,
         name="recon",
     ).with_config({"recursion_limit": 200})

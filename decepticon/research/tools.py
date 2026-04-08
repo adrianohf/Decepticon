@@ -15,16 +15,20 @@ LangChain tool return contract and keeps LLM token usage low.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
 from decepticon.core.logging import get_logger
 from decepticon.research import cve as cve_mod
 from decepticon.research import fuzz as fuzz_mod
-from decepticon.research.chain import plan_chains, promote_chain
+from decepticon.research.chain import critical_path_score, plan_chains, promote_chain
 from decepticon.research.graph import (
     DEFAULT_PATH,
     Edge,
@@ -74,6 +78,204 @@ def _parse_props(props_json: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("props must be a JSON object")
     return parsed
+
+
+def _severity_from_score(score: float) -> Severity:
+    if score >= 9.0:
+        return Severity.CRITICAL
+    if score >= 7.0:
+        return Severity.HIGH
+    if score >= 4.0:
+        return Severity.MEDIUM
+    if score > 0.0:
+        return Severity.LOW
+    return Severity.INFO
+
+
+def _severity_from_string(value: str | None) -> Severity:
+    if not value:
+        return Severity.MEDIUM
+    normalized = value.strip().lower()
+    mapping = {
+        "critical": Severity.CRITICAL,
+        "high": Severity.HIGH,
+        "medium": Severity.MEDIUM,
+        "low": Severity.LOW,
+        "info": Severity.INFO,
+        "informational": Severity.INFO,
+    }
+    return mapping.get(normalized, Severity.MEDIUM)
+
+
+def _is_web_port(port: int) -> bool:
+    return port in {80, 81, 443, 3000, 5000, 7001, 8000, 8008, 8080, 8443, 8888}
+
+
+def _ensure_host_node(
+    graph: KnowledgeGraph,
+    *,
+    label: str,
+    key: str,
+    **props: Any,
+) -> Node:
+    return graph.upsert_node(Node.make(NodeKind.HOST, label, key=key, **props))
+
+
+def _ensure_service_node(
+    graph: KnowledgeGraph,
+    *,
+    host: Node,
+    host_label: str,
+    port: int,
+    proto: str,
+    **props: Any,
+) -> Node:
+    label = f"{host_label}:{port}/{proto}"
+    service = graph.upsert_node(
+        Node.make(
+            NodeKind.SERVICE,
+            label,
+            key=f"service::{host_label}:{port}/{proto}",
+            host=host_label,
+            port=port,
+            protocol=proto,
+            **props,
+        )
+    )
+    graph.upsert_edge(Edge.make(host.id, service.id, EdgeKind.EXPOSES, weight=0.6))
+    graph.upsert_edge(Edge.make(service.id, host.id, EdgeKind.RUNS_ON, weight=0.6))
+    return service
+
+
+def _ensure_entrypoint_node(
+    graph: KnowledgeGraph,
+    *,
+    host_label: str,
+    port: int,
+    source: str,
+) -> Node:
+    scheme = "https" if port in {443, 8443} else "http"
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    endpoint = f"{scheme}://{host_label}/" if default_port else f"{scheme}://{host_label}:{port}/"
+    return graph.upsert_node(
+        Node.make(
+            NodeKind.ENTRYPOINT,
+            endpoint,
+            key=f"entrypoint::{endpoint}",
+            source=source,
+            host=host_label,
+            port=port,
+            scheme=scheme,
+        )
+    )
+
+
+def _iter_requirements(path: Path) -> list[tuple[str, str, str]]:
+    deps: list[tuple[str, str, str]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split(";", 1)[0].strip()
+        line = line.split("#", 1)[0].strip()
+        m = re.match(r"([A-Za-z0-9_.\-]+)\s*==\s*([A-Za-z0-9_.\-+]+)$", line)
+        if m:
+            deps.append((m.group(1), m.group(2), "PyPI"))
+    return deps
+
+
+def _iter_package_lock(path: Path) -> list[tuple[str, str, str]]:
+    deps: list[tuple[str, str, str]] = []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    packages = payload.get("packages")
+    if isinstance(packages, dict):
+        for pkg_path, meta in packages.items():
+            if not pkg_path.startswith("node_modules/"):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            name = meta.get("name") or pkg_path.rsplit("node_modules/", 1)[-1]
+            version = meta.get("version")
+            if isinstance(name, str) and isinstance(version, str):
+                deps.append((name, version, "npm"))
+        return deps
+
+    # npm lockfile v1 fallback
+    stack = [payload.get("dependencies", {})]
+    while stack:
+        cur = stack.pop()
+        if not isinstance(cur, dict):
+            continue
+        for name, meta in cur.items():
+            if not isinstance(meta, dict):
+                continue
+            version = meta.get("version")
+            if isinstance(name, str) and isinstance(version, str):
+                deps.append((name, version, "npm"))
+            nested = meta.get("dependencies")
+            if isinstance(nested, dict):
+                stack.append(nested)
+    return deps
+
+
+def _iter_go_sum(path: Path) -> list[tuple[str, str, str]]:
+    deps: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        module = parts[0]
+        version = parts[1]
+        if module.endswith("/go.mod"):
+            module = module[: -len("/go.mod")]
+        if version.endswith("/go.mod"):
+            version = version[: -len("/go.mod")]
+        key = (module, version)
+        if key in seen:
+            continue
+        seen.add(key)
+        deps.append((module, version, "Go"))
+    return deps
+
+
+def _iter_cargo_lock(path: Path) -> list[tuple[str, str, str]]:
+    deps: list[tuple[str, str, str]] = []
+    # Cargo.lock is TOML-like; avoid external deps with a tiny parser.
+    current_name: str | None = None
+    current_ver: str | None = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line == "[[package]]":
+            if current_name and current_ver:
+                deps.append((current_name, current_ver, "crates.io"))
+            current_name = None
+            current_ver = None
+            continue
+        if line.startswith("name = "):
+            current_name = line.split("=", 1)[1].strip().strip('"')
+        elif line.startswith("version = "):
+            current_ver = line.split("=", 1)[1].strip().strip('"')
+    if current_name and current_ver:
+        deps.append((current_name, current_ver, "crates.io"))
+    return deps
+
+
+def _parse_dependencies(path: Path) -> list[tuple[str, str, str]]:
+    name = path.name.lower()
+    if name == "requirements.txt":
+        return _iter_requirements(path)
+    if name == "package-lock.json":
+        return _iter_package_lock(path)
+    if name == "go.sum":
+        return _iter_go_sum(path)
+    if name == "cargo.lock":
+        return _iter_cargo_lock(path)
+    return []
 
 
 # ── Knowledge graph tools ───────────────────────────────────────────────
@@ -307,6 +509,133 @@ async def cve_by_package(package: str, version: str, ecosystem: str = "PyPI") ->
     return _json({"package": package, "version": version, "ecosystem": ecosystem, "ids": ids})
 
 
+@tool
+async def cve_enrich_dependencies(path: str, limit: int = 100, min_score: float = 7.0) -> str:
+    """Parse a lockfile/manifest and enrich the graph with ranked CVE findings.
+
+    Supported files:
+      - requirements.txt
+      - package-lock.json
+      - go.sum
+      - Cargo.lock
+    """
+    dep_path = Path(path)
+    if not dep_path.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    try:
+        deps = _parse_dependencies(dep_path)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        return _json({"error": f"dependency parse failed: {e}"})
+
+    # Deduplicate and cap work for bounded runtime.
+    dedup: dict[tuple[str, str, str], None] = {}
+    for dep in deps:
+        dedup[dep] = None
+    planned = list(dedup.keys())[: max(limit, 1)]
+    if not planned:
+        return _json({"error": f"unsupported or empty dependency file: {dep_path.name}"})
+
+    graph, out_path = _load()
+    added = 0
+    kept: list[dict[str, Any]] = []
+
+    semaphore = asyncio.Semaphore(8)
+
+    async def _lookup(dep: tuple[str, str, str]) -> tuple[tuple[str, str, str], list[dict[str, Any]]]:
+        name, version, ecosystem = dep
+        async with semaphore:
+            vuln_ids = await cve_mod.lookup_package(name, version, ecosystem)
+        cve_ids = sorted({vid for vid in vuln_ids if isinstance(vid, str) and vid.startswith("CVE-")})
+        if not cve_ids:
+            return dep, []
+        records = await cve_mod.lookup_cves(cve_ids, concurrency=6)
+        return dep, [r.to_dict() for r in records if r.score >= min_score]
+
+    results = await asyncio.gather(*[_lookup(dep) for dep in planned])
+
+    for dep, records in results:
+        name, version, ecosystem = dep
+        dep_node = graph.upsert_node(
+            Node.make(
+                NodeKind.SERVICE,
+                f"{name}@{version}",
+                key=f"dependency::{ecosystem}::{name}@{version}",
+                component_type="dependency",
+                package=name,
+                version=version,
+                ecosystem=ecosystem,
+                source="dependency-enricher",
+            )
+        )
+
+        for rec in records:
+            cve_id = str(rec.get("cve_id") or "")
+            if not cve_id.startswith("CVE-"):
+                continue
+            score = float(rec.get("score") or 0.0)
+            severity = _severity_from_score(score)
+            cve_node = graph.upsert_node(
+                Node.make(
+                    NodeKind.CVE,
+                    cve_id,
+                    key=f"cve::{cve_id}",
+                    cvss=rec.get("cvss"),
+                    epss=rec.get("epss"),
+                    kev=rec.get("kev"),
+                    score=score,
+                    source="nvd+epss+osv",
+                )
+            )
+            vuln = graph.upsert_node(
+                Node.make(
+                    NodeKind.VULNERABILITY,
+                    f"{name}@{version} affected by {cve_id}",
+                    key=f"dep-vuln::{ecosystem}::{name}@{version}::{cve_id}",
+                    package=name,
+                    version=version,
+                    ecosystem=ecosystem,
+                    cve_id=cve_id,
+                    severity=severity.value,
+                    cvss=rec.get("cvss"),
+                    cvss_vector=rec.get("cvss_vector"),
+                    epss=rec.get("epss"),
+                    epss_percentile=rec.get("epss_percentile"),
+                    kev=rec.get("kev"),
+                    score=score,
+                    summary=rec.get("summary", ""),
+                    references=rec.get("references", []),
+                    source="dependency-enricher",
+                )
+            )
+            graph.upsert_edge(Edge.make(dep_node.id, cve_node.id, EdgeKind.AFFECTED_BY, weight=0.5))
+            graph.upsert_edge(Edge.make(dep_node.id, vuln.id, EdgeKind.HAS_VULN, weight=0.5))
+            graph.upsert_edge(Edge.make(vuln.id, cve_node.id, EdgeKind.MAPPED_TO, weight=0.5))
+            kept.append(
+                {
+                    "dependency": f"{name}@{version}",
+                    "ecosystem": ecosystem,
+                    "cve": cve_id,
+                    "score": score,
+                    "severity": severity.value,
+                    "kev": bool(rec.get("kev")),
+                }
+            )
+            added += 1
+
+    _save(graph, out_path)
+    kept.sort(key=lambda x: x["score"], reverse=True)
+    return _json(
+        {
+            "dependency_file": str(dep_path),
+            "dependencies_scanned": len(planned),
+            "high_signal_records": added,
+            "results": kept[:100],
+            "stats": graph.stats(),
+        }
+    )
+
+
 # ── Static analysis ingestion ───────────────────────────────────────────
 
 
@@ -338,6 +667,260 @@ def kg_ingest_sarif(path: str, scanner_hint: str = "") -> str:
     n = ingest_sarif_file(path, graph, scanner_hint=hint)
     _save(graph, out)
     return _json({"ingested": n, "stats": graph.stats()})
+
+
+# ── Recon report ingestion ──────────────────────────────────────────────
+
+
+@tool
+def kg_ingest_nmap_xml(path: str, scanner_hint: str = "nmap") -> str:
+    """Ingest Nmap XML output into the knowledge graph.
+
+    This creates host/service nodes and adds entrypoint nodes for common web
+    ports so chain planning can start from externally reachable surfaces.
+    """
+    graph, out_path = _load()
+
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as e:
+        return _json({"error": f"failed to parse nmap xml: {e}"})
+
+    hosts_added = 0
+    services_added = 0
+    entrypoints_added = 0
+
+    for host_el in root.findall("host"):
+        status = host_el.find("status")
+        if status is not None and status.get("state") not in {None, "up"}:
+            continue
+
+        addr_el = host_el.find("address[@addrtype='ipv4']") or host_el.find("address")
+        if addr_el is None:
+            continue
+        ip = addr_el.get("addr")
+        if not ip:
+            continue
+
+        hostname_el = host_el.find("hostnames/hostname")
+        hostname = hostname_el.get("name") if hostname_el is not None else ""
+        host_label = hostname or ip
+        host = _ensure_host_node(
+            graph,
+            label=host_label,
+            key=f"host::{ip}",
+            ip=ip,
+            hostname=hostname,
+            source=scanner_hint,
+        )
+        hosts_added += 1
+
+        for port_el in host_el.findall("ports/port"):
+            state_el = port_el.find("state")
+            if state_el is None or state_el.get("state") != "open":
+                continue
+            try:
+                port = int(port_el.get("portid", "0"))
+            except ValueError:
+                continue
+            proto = port_el.get("protocol", "tcp")
+            service_el = port_el.find("service")
+            service_name = service_el.get("name") if service_el is not None else "unknown"
+            product = service_el.get("product") if service_el is not None else ""
+            version = service_el.get("version") if service_el is not None else ""
+
+            service = _ensure_service_node(
+                graph,
+                host=host,
+                host_label=host_label,
+                port=port,
+                proto=proto,
+                source=scanner_hint,
+                service=service_name,
+                product=product,
+                version=version,
+            )
+            services_added += 1
+
+            if _is_web_port(port):
+                ep = _ensure_entrypoint_node(
+                    graph,
+                    host_label=hostname or ip,
+                    port=port,
+                    source=scanner_hint,
+                )
+                graph.upsert_edge(Edge.make(service.id, ep.id, EdgeKind.EXPOSES, weight=0.5))
+                graph.upsert_edge(Edge.make(ep.id, service.id, EdgeKind.RUNS_ON, weight=0.5))
+                entrypoints_added += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "ingested": {
+                "hosts": hosts_added,
+                "services": services_added,
+                "entrypoints": entrypoints_added,
+            },
+            "stats": graph.stats(),
+        }
+    )
+
+
+@tool
+def kg_ingest_nuclei_jsonl(path: str, scanner_hint: str = "nuclei") -> str:
+    """Ingest Nuclei JSONL output into the knowledge graph.
+
+    Expected format is one JSON object per line (`nuclei -jsonl` output).
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    parsed = 0
+    skipped = 0
+
+    for raw_line in p.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+
+        info = record.get("info") if isinstance(record.get("info"), dict) else {}
+        severity = _severity_from_string(info.get("severity"))
+        rule_id = str(record.get("template-id") or "unknown-template")
+        target = str(record.get("matched-at") or record.get("host") or "unknown-target")
+        parsed += 1
+
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[{scanner_hint}:{rule_id}] {target}",
+                key=f"{scanner_hint}::{rule_id}::{target}",
+                scanner=scanner_hint,
+                rule_id=rule_id,
+                severity=severity.value,
+                type=record.get("type"),
+                matcher_name=record.get("matcher-name"),
+                message=record.get("matched-at") or target,
+                tags=(info.get("tags") if isinstance(info.get("tags"), list) else []),
+            )
+        )
+
+        parsed_target = urlparse(target)
+        if parsed_target.scheme and parsed_target.netloc:
+            url_node = graph.upsert_node(
+                Node.make(
+                    NodeKind.URL,
+                    target,
+                    key=f"url::{target}",
+                    source=scanner_hint,
+                )
+            )
+            target_node = graph.upsert_node(
+                Node.make(
+                    NodeKind.ENTRYPOINT,
+                    target,
+                    key=f"entrypoint::{target}",
+                    source=scanner_hint,
+                    scheme=parsed_target.scheme,
+                    host=parsed_target.hostname,
+                    port=parsed_target.port,
+                )
+            )
+            graph.upsert_edge(Edge.make(target_node.id, url_node.id, EdgeKind.RUNS_ON, weight=0.5))
+            graph.upsert_edge(Edge.make(url_node.id, target_node.id, EdgeKind.EXPOSES, weight=0.5))
+        else:
+            host_label = target.split(":", 1)[0]
+            target_node = _ensure_host_node(
+                graph,
+                label=host_label,
+                key=f"host::{host_label}",
+                source=scanner_hint,
+            )
+        graph.upsert_edge(Edge.make(target_node.id, vuln.id, EdgeKind.HAS_VULN, weight=0.4))
+
+        classification = info.get("classification")
+        if isinstance(classification, dict):
+            cve_ids = classification.get("cve-id")
+            if isinstance(cve_ids, str):
+                cve_ids = [cve_ids]
+            if isinstance(cve_ids, list):
+                for cve_id in cve_ids:
+                    if not isinstance(cve_id, str):
+                        continue
+                    cid = cve_id.strip().upper()
+                    if not cid.startswith("CVE-"):
+                        continue
+                    cve_node = graph.upsert_node(
+                        Node.make(NodeKind.CVE, cid, key=f"cve::{cid}", source=scanner_hint)
+                    )
+                    graph.upsert_edge(Edge.make(vuln.id, cve_node.id, EdgeKind.MAPPED_TO))
+
+    _save(graph, out_path)
+    return _json({"parsed": parsed, "skipped": skipped, "stats": graph.stats()})
+
+
+@tool
+def kg_ingest_subfinder(path: str, root_domain: str = "") -> str:
+    """Ingest subfinder plaintext output (one subdomain per line).
+
+    Creates host nodes and HTTP/HTTPS entrypoints so chain planning can
+    target internet-exposed surfaces directly.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    domains_added = 0
+    entrypoints_added = 0
+    root = root_domain.strip().lower()
+
+    for raw_line in p.read_text(encoding="utf-8").splitlines():
+        domain = raw_line.strip().lower().rstrip(".")
+        if not domain or " " in domain:
+            continue
+        if root and not domain.endswith(root):
+            continue
+
+        host = _ensure_host_node(
+            graph,
+            label=domain,
+            key=f"host::{domain}",
+            source="subfinder",
+            root_domain=root or None,
+        )
+        domains_added += 1
+
+        for scheme in ("https", "http"):
+            url = f"{scheme}://{domain}/"
+            ep = graph.upsert_node(
+                Node.make(
+                    NodeKind.ENTRYPOINT,
+                    url,
+                    key=f"entrypoint::{url}",
+                    source="subfinder",
+                    host=domain,
+                    scheme=scheme,
+                )
+            )
+            graph.upsert_edge(Edge.make(host.id, ep.id, EdgeKind.EXPOSES, weight=0.5))
+            graph.upsert_edge(Edge.make(ep.id, host.id, EdgeKind.RUNS_ON, weight=0.5))
+            entrypoints_added += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "domains_added": domains_added,
+            "entrypoints_added": entrypoints_added,
+            "stats": graph.stats(),
+        }
+    )
 
 
 # ── Chain planner ──────────────────────────────────────────────────────
@@ -383,6 +966,70 @@ def plan_attack_chains(
             "chains": [c.to_dict() for c in chains],
         }
     )
+
+
+@tool
+def suggest_objectives_from_chains(
+    top_k: int = 5,
+    max_depth: int = 8,
+    max_cost: float = 20.0,
+) -> str:
+    """Convert top-ranked attack chains into OPPLAN-ready objective drafts.
+
+    This does not mutate OPPLAN; it returns draft payloads for the
+    orchestrator's `add_objective` tool.
+    """
+    graph, _ = _load()
+    chains = plan_chains(graph, top_k=max(top_k, 1), max_depth=max_depth, max_cost=max_cost)
+    if not chains:
+        return _json({"count": 0, "objectives": []})
+
+    ranked = sorted(chains, key=critical_path_score, reverse=True)
+    drafts: list[dict[str, Any]] = []
+
+    for idx, chain in enumerate(ranked[:top_k], start=1):
+        chain_score = critical_path_score(chain)
+        mitre: list[str] = []
+        highest = Severity.INFO
+
+        for step in chain.steps:
+            step_mitre = step.node.props.get("mitre")
+            if isinstance(step_mitre, list):
+                mitre.extend([m for m in step_mitre if isinstance(m, str)])
+            sev = _severity_from_string(step.node.props.get("severity"))
+            if sev in {Severity.CRITICAL, Severity.HIGH}:
+                highest = sev
+
+        phase = "initial-access"
+        if any(step.node.kind in {NodeKind.CREDENTIAL, NodeKind.SECRET} for step in chain.steps):
+            phase = "post-exploit"
+        elif "admin" in chain.crown_jewel.label.lower() or "domain" in chain.crown_jewel.label.lower():
+            phase = "post-exploit"
+
+        title = f"Exploit chain {idx}: {chain.entrypoint.label} -> {chain.crown_jewel.label}"
+        acceptance = [
+            f"Demonstrate path from {chain.entrypoint.label} to {chain.crown_jewel.label}.",
+            "Capture evidence for each hop (commands, outputs, and impacted asset IDs).",
+            "Validate the highest-risk step with PoC evidence or explain why blocked.",
+        ]
+        drafts.append(
+            {
+                "priority": idx,
+                "phase": phase,
+                "title": title,
+                "description": chain.summary(),
+                "acceptance_criteria": acceptance,
+                "mitre": sorted(set(mitre)),
+                "opsec": "careful" if highest in {Severity.HIGH, Severity.CRITICAL} else "standard",
+                "notes": {
+                    "chain_total_cost": chain.total_cost,
+                    "chain_score": chain_score,
+                    "path": chain.path_labels,
+                },
+            }
+        )
+
+    return _json({"count": len(drafts), "objectives": drafts})
 
 
 # ── Fuzzing ─────────────────────────────────────────────────────────────
@@ -578,10 +1225,15 @@ RESEARCH_TOOLS = [
     kg_query,
     kg_neighbors,
     kg_stats,
+    kg_ingest_nmap_xml,
+    kg_ingest_nuclei_jsonl,
+    kg_ingest_subfinder,
     kg_ingest_sarif,
     cve_lookup,
     cve_by_package,
+    cve_enrich_dependencies,
     plan_attack_chains,
+    suggest_objectives_from_chains,
     fuzz_classify,
     fuzz_harness,
     fuzz_record_crash,
