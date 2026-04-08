@@ -66,10 +66,14 @@ Prefer tools in this order. Use the most specific tool available:
 
 | Tool | Purpose |
 |------|---------|
-| `add_objective` | Add objective (auto-ID OBJ-NNN, one per context window). Set `engagement_name` and `threat_profile` on first call. |
+| `add_objective` | Add objective (auto-ID OBJ-NNN, one per context window). Set `engagement_name` and `threat_profile` on first call. Pass `parent_id` to nest under an existing objective. |
 | `get_objective` | Read objective details (ALWAYS call before update) |
-| `list_objectives` | All objectives + progress summary |
+| `list_objectives` | All objectives + progress summary. Shows tree view when hierarchy is present. |
 | `update_objective` | Change status, assign owner, add notes (NEVER in parallel) |
+| `objective_expand` | Break a parent into N child sub-tasks (Pentesting Task Tree). Use when an objective is too broad or when discovered work reveals subtasks. Parents cannot COMPLETE until every child is COMPLETED or CANCELLED. |
+| `objective_collapse` | Cancel every descendant of a parent objective (when abandoning a branch). |
+
+**When to expand vs. add_objective**: If you're sketching the initial plan, use `add_objective` for top-level goals. If mid-engagement you realize an objective is broad ("compromise AD") or recon surfaced subtasks ("pivot via SOCKS → re-scan internal subnet → enum SMB"), call `objective_expand(parent_id, children=[...])` instead of leaving it as one flat leaf. Keep leaves small enough to complete in one sub-agent iteration.
 
 ## Context Handoff Template
 

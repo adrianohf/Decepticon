@@ -75,6 +75,7 @@ class ObjectiveStatus(StrEnum):
     IN_PROGRESS = "in-progress"
     COMPLETED = "completed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 class FindingSeverity(StrEnum):

@@ -85,17 +85,31 @@ These are always available — no mode switching needed.
 - **`update_objective`** — Update status, notes, or owner.
   ALWAYS call get_objective first. NEVER call multiple times in parallel.
 
+- **`objective_expand`** — Break a parent objective into N child sub-tasks.
+  Use when an objective is broad or when discovered work reveals sub-tasks —
+  keep each leaf small enough to complete in one sub-agent iteration.
+  This is the Pentesting Task Tree (PTT) pattern. Parents cannot move to
+  COMPLETED until every child is COMPLETED or CANCELLED.
+
+- **`objective_collapse`** — Cancel every descendant of a parent objective.
+  Use when abandoning a hierarchical task so the parent can then be moved
+  to COMPLETED or CANCELLED itself.
+
 ### Workflow
 ```
 add_objective(×N, engagement_name=...) → [user approval] → Ralph Loop
+          ↓
+objective_expand(parent_id, children=[...])   # split broad work on demand
 ```
 
 ### Status Transitions
 ```
 pending → in-progress → completed    (evidence documented)
                        → blocked      (failure reason documented)
+                       → cancelled    (abandon cleanly)
 blocked → in-progress                 (retry with different approach)
         → completed                   (abandon with explanation)
+        → cancelled                   (drop from plan)
 ```
 
 ### Rules — NEVER Violate
@@ -112,10 +126,11 @@ blocked → in-progress                 (retry with different approach)
 # ── State Transition Rules ────────────────────────────────────────────
 
 _VALID_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"in-progress"},
-    "in-progress": {"completed", "blocked"},
-    "blocked": {"in-progress", "completed"},  # retry or abandon
+    "pending": {"in-progress", "cancelled"},
+    "in-progress": {"completed", "blocked", "cancelled"},
+    "blocked": {"in-progress", "completed", "cancelled"},  # retry, abandon, drop
     # completed is terminal
+    # cancelled is terminal
 }
 
 
@@ -200,10 +215,17 @@ def _format_opplan_for_agent(
     engagement_name: str,
     threat_profile: str,
 ) -> str:
-    """Format OPPLAN for list_objectives response (detailed overview)."""
+    """Format OPPLAN for list_objectives response (detailed overview).
+
+    When any objective has ``parent_id`` set, the output includes an
+    indented tree view after the flat table so the agent can see the
+    hierarchy at a glance.
+    """
     total = len(objectives)
     completed = sum(1 for o in objectives if o.get("status") == "completed")
     blocked = sum(1 for o in objectives if o.get("status") == "blocked")
+
+    has_tree = any(o.get("parent_id") for o in objectives)
 
     lines = [
         f"# OPPLAN: {engagement_name}",
@@ -217,14 +239,43 @@ def _format_opplan_for_agent(
     for o in sorted(objectives, key=lambda x: x.get("priority", 999)):
         status = o.get("status", "pending")
         blocked_by = ", ".join(o.get("blocked_by", [])) or "-"
+        title = o.get("title", "?")
+        if o.get("parent_id"):
+            title = f"↳ {title}"
         lines.append(
             f"| {o.get('id', '?')} | {o.get('phase', '?')} | "
-            f"{o.get('title', '?')} | {status} | "
+            f"{title} | {status} | "
             f"{o.get('priority', '?')} | {o.get('owner') or '-'} | "
             f"{blocked_by} |"
         )
 
     lines.append("")
+
+    if has_tree:
+        lines.append("## Task Tree")
+
+        def _render(parent_id: str | None, depth: int) -> None:
+            kids = sorted(
+                [o for o in objectives if o.get("parent_id") == parent_id],
+                key=lambda x: x.get("priority", 999),
+            )
+            for o in kids:
+                indent = "  " * depth
+                status = o.get("status", "pending")
+                marker = {
+                    "completed": "[x]",
+                    "blocked": "[!]",
+                    "cancelled": "[-]",
+                    "in-progress": "[~]",
+                }.get(status, "[ ]")
+                lines.append(
+                    f"{indent}- {marker} {o.get('id', '?')} {o.get('title', '?')} "
+                    f"({status})"
+                )
+                _render(o["id"], depth + 1)
+
+        _render(None, 0)
+        lines.append("")
 
     # Next objective recommendation
     actionable = [o for o in objectives if o.get("status") in ("pending", "in-progress")]
@@ -279,11 +330,31 @@ def _make_tools() -> list:
         c2_tier: C2Tier = C2Tier.INTERACTIVE,
         concessions: list[str] | None = None,
         blocked_by: list[str] | None = None,
+        parent_id: str | None = None,
         tool_call_id: Annotated[str, InjectedToolCallId] = "",
     ) -> Command[Any]:
         """Add one objective with auto-ID generation."""
         counter = state.get("objective_counter", 0) + 1
         obj_id = f"OBJ-{counter:03d}"
+
+        # Validate parent_id if supplied
+        if parent_id:
+            existing_ids = {o.get("id") for o in state.get("objectives", [])}
+            if parent_id not in existing_ids:
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(
+                                content=(
+                                    f"Parent objective '{parent_id}' not found. "
+                                    f"Existing: {', '.join(sorted(i for i in existing_ids if i))}"
+                                ),
+                                tool_call_id=tool_call_id,
+                                status="error",
+                            )
+                        ],
+                    }
+                )
 
         obj_dict = {
             "id": obj_id,
@@ -301,6 +372,7 @@ def _make_tools() -> list:
             "blocked_by": blocked_by or [],
             "owner": "",
             "notes": "",
+            "parent_id": parent_id,
         }
 
         # Pydantic validation
@@ -566,6 +638,33 @@ def _make_tools() -> list:
                         }
                     )
 
+            # Parents cannot complete until every child is done.
+            if status == "completed":
+                children = [o for o in objectives if o.get("parent_id") == objective_id]
+                if children:
+                    unresolved_kids = [
+                        c["id"]
+                        for c in children
+                        if c.get("status") not in {"completed", "cancelled"}
+                    ]
+                    if unresolved_kids:
+                        return Command(
+                            update={
+                                "messages": [
+                                    ToolMessage(
+                                        content=(
+                                            f"Cannot complete {objective_id}: "
+                                            f"children still open: {', '.join(unresolved_kids)}. "
+                                            f"Complete or cancel each child first, or call "
+                                            f"objective_collapse({objective_id})."
+                                        ),
+                                        tool_call_id=tool_call_id,
+                                        status="error",
+                                    )
+                                ],
+                            }
+                        )
+
             target["status"] = status
             updated_fields.append(f"status → {status}")
 
@@ -631,7 +730,219 @@ def _make_tools() -> list:
             }
         )
 
-    return [add_objective, get_objective, list_objectives, update_objective]
+    @tool(
+        description=(
+            "Expand a parent objective into one or more child sub-tasks. "
+            "Each child inherits the parent's phase by default but can override it. "
+            "Children auto-receive IDs (OBJ-NNN) and are added with status 'pending'. "
+            "The parent cannot move to COMPLETED until every child is COMPLETED or CANCELLED. "
+            "Use this when an objective is broad or when recon reveals sub-tasks — it is "
+            "the Pentesting Task Tree (PTT) pattern. Keep children small enough to complete "
+            "in one sub-agent iteration."
+        )
+    )
+    def objective_expand(
+        parent_id: str,
+        children: list[dict],
+        state: Annotated[dict, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    ) -> Command[Any]:
+        """Create ``len(children)`` child objectives under ``parent_id``.
+
+        Each child dict must have: ``title`` (str), ``description`` (str),
+        ``acceptance_criteria`` (list[str]). Optional: ``phase``
+        (ObjectivePhase value, default inherited from parent),
+        ``priority`` (int, default parent.priority + N), ``mitre``,
+        ``blocked_by``.
+        """
+        objectives = [dict(o) for o in state.get("objectives", [])]
+        parent = next((o for o in objectives if o.get("id") == parent_id), None)
+        if parent is None:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=f"Parent objective '{parent_id}' not found.",
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        )
+                    ],
+                }
+            )
+        if parent.get("status") in {"completed", "cancelled"}:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=(
+                                f"Cannot expand {parent_id}: status is "
+                                f"{parent.get('status')}. Expand open parents only."
+                            ),
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        )
+                    ],
+                }
+            )
+        if not children:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content="children list is empty — nothing to expand.",
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        )
+                    ],
+                }
+            )
+
+        counter = state.get("objective_counter", 0)
+        created_ids: list[str] = []
+        parent_phase = parent.get("phase")
+        parent_priority = int(parent.get("priority", 100))
+        for idx, child in enumerate(children, start=1):
+            counter += 1
+            obj_id = f"OBJ-{counter:03d}"
+            title = str(child.get("title", "")).strip()
+            description = str(child.get("description", "")).strip()
+            acceptance = child.get("acceptance_criteria") or []
+            if not title or not description or not acceptance:
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(
+                                content=(
+                                    f"Child #{idx} missing required fields "
+                                    "(title, description, acceptance_criteria)."
+                                ),
+                                tool_call_id=tool_call_id,
+                                status="error",
+                            )
+                        ],
+                    }
+                )
+            phase = child.get("phase", parent_phase)
+            priority = int(child.get("priority", parent_priority + idx))
+            child_dict = {
+                "id": obj_id,
+                "title": title,
+                "phase": phase,
+                "description": description,
+                "acceptance_criteria": list(acceptance),
+                "priority": priority,
+                "status": "pending",
+                "mitre": list(child.get("mitre") or []),
+                "opsec": parent.get("opsec", "standard"),
+                "opsec_notes": "",
+                "c2_tier": parent.get("c2_tier", "interactive"),
+                "concessions": [],
+                "blocked_by": list(child.get("blocked_by") or []),
+                "owner": "",
+                "notes": "",
+                "parent_id": parent_id,
+            }
+            try:
+                Objective(**child_dict)
+            except Exception as e:
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(
+                                content=f"Child #{idx} validation failed: {e}",
+                                tool_call_id=tool_call_id,
+                                status="error",
+                            )
+                        ],
+                    }
+                )
+            objectives.append(child_dict)
+            created_ids.append(obj_id)
+
+        return Command(
+            update={
+                "objectives": objectives,
+                "objective_counter": counter,
+                "messages": [
+                    ToolMessage(
+                        content=(
+                            f"Expanded {parent_id} into {len(created_ids)} children: "
+                            f"{', '.join(created_ids)}"
+                        ),
+                        tool_call_id=tool_call_id,
+                    )
+                ],
+            }
+        )
+
+    @tool(
+        description=(
+            "Cancel every descendant of a parent objective. Use when abandoning a "
+            "hierarchical task — sets each child's status to 'cancelled' so the "
+            "parent can then be moved to COMPLETED or CANCELLED itself. "
+            "Only pending / in-progress / blocked children are touched; already-done "
+            "children are left as-is."
+        )
+    )
+    def objective_collapse(
+        parent_id: str,
+        state: Annotated[dict, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    ) -> Command[Any]:
+        """Mark every descendant of ``parent_id`` as cancelled."""
+        objectives = [dict(o) for o in state.get("objectives", [])]
+        if not any(o.get("id") == parent_id for o in objectives):
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=f"Parent objective '{parent_id}' not found.",
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        )
+                    ],
+                }
+            )
+
+        # Walk descendants depth-first
+        stack = [parent_id]
+        descendants: list[dict[str, Any]] = []
+        while stack:
+            current = stack.pop()
+            for o in objectives:
+                if o.get("parent_id") == current:
+                    descendants.append(o)
+                    stack.append(o["id"])
+
+        cancelled: list[str] = []
+        for o in descendants:
+            if o.get("status") in {"pending", "in-progress", "blocked"}:
+                o["status"] = "cancelled"
+                cancelled.append(o["id"])
+
+        return Command(
+            update={
+                "objectives": objectives,
+                "messages": [
+                    ToolMessage(
+                        content=(
+                            f"Cancelled {len(cancelled)} descendants of {parent_id}"
+                            + (f": {', '.join(cancelled)}" if cancelled else "")
+                        ),
+                        tool_call_id=tool_call_id,
+                    )
+                ],
+            }
+        )
+
+    return [
+        add_objective,
+        get_objective,
+        list_objectives,
+        update_objective,
+        objective_expand,
+        objective_collapse,
+    ]
 
 
 # ── Middleware Class ──────────────────────────────────────────────────
