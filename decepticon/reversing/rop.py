@@ -69,9 +69,7 @@ def find_rop_gadgets(
     return gadgets
 
 
-def filter_gadgets_by_pattern(
-    gadgets: list[RopGadget], pattern_hex: str
-) -> list[RopGadget]:
+def filter_gadgets_by_pattern(gadgets: list[RopGadget], pattern_hex: str) -> list[RopGadget]:
     """Filter to gadgets containing a specific byte pattern (hex)."""
     pattern = bytes.fromhex(pattern_hex)
     return [g for g in gadgets if pattern in g.bytes_]

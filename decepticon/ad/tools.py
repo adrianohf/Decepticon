@@ -59,7 +59,10 @@ def dcsync_check() -> str:
     graph = load_graph(_kg_path())
     hits = dcsync_candidates(graph)
     return _json(
-        {"count": len(hits), "candidates": [{"id": node_id, "label": label} for node_id, label in hits]}
+        {
+            "count": len(hits),
+            "candidates": [{"id": node_id, "label": label} for node_id, label in hits],
+        }
     )
 
 

@@ -89,16 +89,12 @@ def detect_packer(data: bytes | str | Path) -> PackerVerdict:
             packer = packer or name
 
     likely = entropy > 7.0 or packer is not None
-    verdict = PackerVerdict(
-        likely_packed=likely, entropy=entropy, packer=packer, signatures=hits
-    )
+    verdict = PackerVerdict(likely_packed=likely, entropy=entropy, packer=packer, signatures=hits)
     if entropy > 7.5 and not packer:
         verdict.notes.append(
             f"entropy {entropy:.2f} is very high — compressed or encrypted, but no signature. "
             "Consider custom packer."
         )
     elif entropy < 4.0:
-        verdict.notes.append(
-            f"entropy {entropy:.2f} is low — likely unpacked or text-heavy."
-        )
+        verdict.notes.append(f"entropy {entropy:.2f} is low — likely unpacked or text-heavy.")
     return verdict

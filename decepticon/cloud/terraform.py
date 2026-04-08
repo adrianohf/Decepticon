@@ -61,7 +61,9 @@ class TFStateReport:
     backend: str | None = None
     outputs: dict[str, Any] = field(default_factory=dict)
     sensitive_outputs: list[str] = field(default_factory=list)
-    secrets: list[tuple[str, str, str]] = field(default_factory=list)  # resource, key, value snippet
+    secrets: list[tuple[str, str, str]] = field(
+        default_factory=list
+    )  # resource, key, value snippet
     resources: int = 0
     providers: set[str] = field(default_factory=set)
     findings: list[TFStateFinding] = field(default_factory=list)
@@ -80,9 +82,7 @@ class TFStateReport:
         }
 
 
-def _walk_secrets(
-    obj: Any, resource: str, report: TFStateReport, path: str = ""
-) -> None:
+def _walk_secrets(obj: Any, resource: str, report: TFStateReport, path: str = "") -> None:
     if isinstance(obj, dict):
         for k, v in obj.items():
             key_path = f"{path}.{k}" if path else k
@@ -142,7 +142,7 @@ def analyze_tfstate(data: str | dict[str, Any]) -> TFStateReport:
         provider = r.get("provider", "")
         if provider:
             report.providers.add(provider)
-        name = f"{r.get('mode','?')}.{r.get('type','?')}.{r.get('name','?')}"
+        name = f"{r.get('mode', '?')}.{r.get('type', '?')}.{r.get('name', '?')}"
         report.resources += 1
         for inst in r.get("instances") or []:
             attrs = inst.get("attributes") or {}

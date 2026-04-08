@@ -80,15 +80,11 @@ def render_executive_summary(
             lines.append(f"- {label} (score {score:.2f})")
         lines.append("")
 
-    validated = [
-        n
-        for n in graph.by_kind(NodeKind.VULNERABILITY)
-        if n.props.get("validated")
-    ]
+    validated = [n for n in graph.by_kind(NodeKind.VULNERABILITY) if n.props.get("validated")]
     if validated:
         lines.append(f"## Validated Findings ({len(validated)})")
         for node in validated[:15]:
-            lines.append(f"- [{node.props.get('severity','?').upper()}] {node.label}")
+            lines.append(f"- [{node.props.get('severity', '?').upper()}] {node.label}")
         lines.append("")
 
     lines.append("## Graph Stats")

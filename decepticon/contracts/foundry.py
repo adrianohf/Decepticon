@@ -135,15 +135,17 @@ contract Test_FlashLoanCallback is Test {{
 """
 
 
-def generate_reentrancy_test(target: str, function: str, target_path: str = "src/Target.sol") -> FoundryHarness:
+def generate_reentrancy_test(
+    target: str, function: str, target_path: str = "src/Target.sol"
+) -> FoundryHarness:
     """Emit a reentrancy PoC test."""
-    source = _REENTRANCY_TEMPLATE.format(
-        target=target, function=function, target_path=target_path
-    )
+    source = _REENTRANCY_TEMPLATE.format(target=target, function=function, target_path=target_path)
     return FoundryHarness(path=f"test/{target}_Reentrancy.t.sol", source=source)
 
 
-def generate_access_control_test(target: str, function: str, target_path: str = "src/Target.sol") -> FoundryHarness:
+def generate_access_control_test(
+    target: str, function: str, target_path: str = "src/Target.sol"
+) -> FoundryHarness:
     source = _ACCESS_CONTROL_TEMPLATE.format(
         target=target, function=function, target_path=target_path
     )

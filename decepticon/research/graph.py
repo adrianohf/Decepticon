@@ -152,9 +152,7 @@ class Edge(BaseModel):
         # can coexist (e.g. AD GetChanges + GetChangesAll both mapped
         # to LEAKS but semantically distinct).
         key = props.get("key", "")
-        digest = hashlib.sha1(
-            f"{src}->{kind.value}->{dst}::{key}".encode()
-        ).hexdigest()[:16]
+        digest = hashlib.sha1(f"{src}->{kind.value}->{dst}::{key}".encode()).hexdigest()[:16]
         return cls(id=digest, src=src, dst=dst, kind=kind, weight=weight, props=dict(props))
 
 

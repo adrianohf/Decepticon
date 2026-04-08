@@ -90,9 +90,7 @@ def _node_kind_for_bh(type_name: str) -> NodeKind:
     return m.get(type_name, NodeKind.SERVICE)
 
 
-def _upsert_bh_object(
-    graph: KnowledgeGraph, obj: dict[str, Any], type_name: str
-) -> Node:
+def _upsert_bh_object(graph: KnowledgeGraph, obj: dict[str, Any], type_name: str) -> Node:
     props = obj.get("Properties") or {}
     object_id = obj.get("ObjectIdentifier") or props.get("objectid") or ""
     label = props.get("name") or obj.get("Name") or object_id or "unknown"
@@ -220,9 +218,7 @@ def merge_bloodhound_json(
     return stats
 
 
-def ingest_bloodhound_zip(
-    path: str | Path, graph: KnowledgeGraph
-) -> ImportStats:
+def ingest_bloodhound_zip(path: str | Path, graph: KnowledgeGraph) -> ImportStats:
     """Walk a BloodHound collector zip and merge every JSON file inside."""
     total = ImportStats()
     p = Path(path)

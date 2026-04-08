@@ -32,34 +32,62 @@ _ASCII_RE = re.compile(rb"[\x20-\x7e]{%d,}" % MIN_STRING_LEN)
 _UTF16LE_RE = re.compile((rb"(?:[\x20-\x7e]\x00){%d,}" % MIN_STRING_LEN))
 
 
-# Category patterns
-_URL_RE = re.compile(r"^(?:https?|ftp|ws)://[^\s<>\"']+$", re.IGNORECASE)
-_IP_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_PATH_RE = re.compile(r"^(?:/[A-Za-z0-9_.\-]+){2,}$|^[A-Z]:\\(?:[^\\]+\\)+[^\\]+$")
-_VERSION_RE = re.compile(r"^\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-_][\w.+]+)?$")
+# Category patterns — all unanchored so they substring-match inside a
+# printable run (strings(1) may return a run like "visit https://evil.com
+# for fun" as a single token and we still want to classify it as a URL).
+_URL_RE = re.compile(r"\b(?:https?|ftp|ws)://[^\s<>\"'`]+", re.IGNORECASE)
+_IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_EMAIL_RE = re.compile(r"\b[^@\s]+@[^@\s]+\.[^@\s]+\b")
+_PATH_RE = re.compile(r"(?:/[A-Za-z0-9_.\-]+){2,}|[A-Z]:\\(?:[^\\\s]+\\)+[^\\\s]+")
+_VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-_][\w.+]+)?\b")
 _FORMAT_RE = re.compile(r"%[-+0# ]?(?:\d+)?(?:\.\d+)?[hljztL]?[dDiufFgGeEsScCpxXoabn]")
-_HEX_KEY_RE = re.compile(r"^[0-9A-Fa-f]{32,}$")
-_PEM_RE = re.compile(r"^-----BEGIN [A-Z ]+-----")
+_HEX_KEY_RE = re.compile(r"\b[0-9A-Fa-f]{32,}\b")
+_PEM_RE = re.compile(r"-----BEGIN [A-Z ]+-----")
 _SECRET_RE = re.compile(
-    r"""^(?:
+    r"""(?:
         sk[-_][A-Za-z0-9]{20,} |                    # stripe-style secret key
-        AKIA[0-9A-Z]{16} |                          # AWS access key
-        AIza[0-9A-Za-z\-_]{35} |                    # Google API key
-        ghp_[A-Za-z0-9]{36} |                       # GitHub PAT
-        gho_[A-Za-z0-9]{36} |
-        xox[baprs]-[A-Za-z0-9\-]{10,} |             # Slack token
+        \bAKIA[0-9A-Z]{16}\b |                      # AWS access key
+        \bAIza[0-9A-Za-z\-_]{35}\b |                # Google API key
+        \bghp_[A-Za-z0-9]{36}\b |                   # GitHub PAT
+        \bgho_[A-Za-z0-9]{36}\b |
+        \bxox[baprs]-[A-Za-z0-9\-]{10,}\b |         # Slack token
         eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}   # JWT
-    )$""",
+    )""",
     re.VERBOSE,
 )
 _IMPORT_HINTS = {
-    "malloc", "free", "memcpy", "strcpy", "strcat", "printf", "sprintf",
-    "fopen", "fread", "fwrite", "fork", "exec", "execve", "system",
-    "socket", "bind", "listen", "accept", "connect", "recv", "send",
-    "LoadLibraryA", "GetProcAddress", "VirtualAlloc", "VirtualProtect",
-    "CreateThread", "CreateProcessA", "WinExec", "ShellExecuteA",
-    "NtCreateThreadEx", "NtUnmapViewOfSection", "NtMapViewOfSection",
+    "malloc",
+    "free",
+    "memcpy",
+    "strcpy",
+    "strcat",
+    "printf",
+    "sprintf",
+    "fopen",
+    "fread",
+    "fwrite",
+    "fork",
+    "exec",
+    "execve",
+    "system",
+    "socket",
+    "bind",
+    "listen",
+    "accept",
+    "connect",
+    "recv",
+    "send",
+    "LoadLibraryA",
+    "GetProcAddress",
+    "VirtualAlloc",
+    "VirtualProtect",
+    "CreateThread",
+    "CreateProcessA",
+    "WinExec",
+    "ShellExecuteA",
+    "NtCreateThreadEx",
+    "NtUnmapViewOfSection",
+    "NtMapViewOfSection",
 }
 
 
@@ -80,26 +108,31 @@ class ExtractedString:
 
 
 def _classify(s: str) -> str:
-    if _URL_RE.match(s):
+    # Ordering matters — more specific categories before generic ones.
+    if _URL_RE.search(s):
         return "url"
-    if _IP_RE.match(s):
-        # exclude the obvious noise
-        parts = s.split(".")
-        if all(0 <= int(p) <= 255 for p in parts):
-            return "ip"
-    if _EMAIL_RE.match(s):
-        return "email"
-    if _PATH_RE.match(s):
-        return "path"
-    if _PEM_RE.match(s):
+    ip_m = _IP_RE.search(s)
+    if ip_m:
+        parts = ip_m.group(0).split(".")
+        try:
+            if all(0 <= int(p) <= 255 for p in parts):
+                return "ip"
+        except ValueError:
+            pass
+    if _PEM_RE.search(s):
         return "crypto"
-    if _HEX_KEY_RE.match(s) and len(s) in (32, 40, 48, 56, 64, 96, 128):
+    m = _HEX_KEY_RE.search(s)
+    if m and len(m.group(0)) in (32, 40, 48, 56, 64, 96, 128):
         return "crypto"
-    if _SECRET_RE.match(s):
+    if _SECRET_RE.search(s):
         return "secret"
+    if _EMAIL_RE.search(s):
+        return "email"
+    if _PATH_RE.search(s):
+        return "path"
     if _FORMAT_RE.search(s):
         return "format"
-    if _VERSION_RE.match(s):
+    if _VERSION_RE.search(s):
         return "version"
     if s in _IMPORT_HINTS or any(hint in s for hint in _IMPORT_HINTS):
         return "import"

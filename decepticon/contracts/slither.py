@@ -52,8 +52,7 @@ def ingest_slither_json(data: str | dict[str, Any], graph: KnowledgeGraph) -> in
         payload = data
 
     results = (
-        payload.get("results", {})
-        .get("detectors")
+        payload.get("results", {}).get("detectors")
         if isinstance(payload.get("results"), dict)
         else None
     )

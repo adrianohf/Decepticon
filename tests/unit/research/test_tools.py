@@ -119,9 +119,7 @@ class TestReconIngestion:
             encoding="utf-8",
         )
 
-        payload = json.loads(
-            research_tools.kg_ingest_httpx_jsonl.invoke({"path": str(httpx_path)})
-        )
+        payload = json.loads(research_tools.kg_ingest_httpx_jsonl.invoke({"path": str(httpx_path)}))
         assert payload["parsed"] == 2
         assert payload["entrypoints"] == 2
         assert payload["service_links"] == 2
@@ -178,7 +176,9 @@ class TestDependencyEnrichment:
             assert ecosystem == "PyPI"
             return ["CVE-2024-1111", "GHSA-foo"]
 
-        async def fake_lookup_cves(cve_ids: list[str], concurrency: int = 6) -> list[Exploitability]:
+        async def fake_lookup_cves(
+            cve_ids: list[str], concurrency: int = 6
+        ) -> list[Exploitability]:
             assert cve_ids == ["CVE-2024-1111"]
             assert concurrency == 6
             return [Exploitability(cve_id="CVE-2024-1111", cvss=9.8, epss=0.8, kev=True)]
@@ -187,7 +187,9 @@ class TestDependencyEnrichment:
         monkeypatch.setattr(research_tools.cve_mod, "lookup_cves", fake_lookup_cves)
 
         payload = json.loads(
-            await research_tools.cve_enrich_dependencies.ainvoke({"path": str(reqs), "min_score": 7.0})
+            await research_tools.cve_enrich_dependencies.ainvoke(
+                {"path": str(reqs), "min_score": 7.0}
+            )
         )
         assert payload["dependencies_scanned"] == 1
         assert payload["high_signal_records"] == 1
@@ -269,7 +271,9 @@ contract Vault {
         _configure_kg(monkeypatch, tmp_path)
         binary = tmp_path / "agent.bin"
         binary.write_bytes(
-            b"MZ" + b"A" * 64 + b"\x00http://c2.example.net/callback\x00"
+            b"MZ"
+            + b"A" * 64
+            + b"\x00http://c2.example.net/callback\x00"
             + b"system strcpy connect\x00"
             + b"AKIAABCDEFGHIJKLMNOP\x00"
         )

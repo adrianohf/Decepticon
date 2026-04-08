@@ -241,10 +241,20 @@ class GraphQLSchema:
         if not t or t.get("kind") not in ("OBJECT", "INTERFACE"):
             return ""
         picks: list[str] = []
-        for f in (t.get("fields") or [])[:5]:
-            ret, _is_list, _ = _unwrap_type(f.get("type"))
+        # Built-in scalars that introspection responses don't always include
+        # in the ``types`` array.
+        builtin_scalars = {"String", "Int", "Float", "Boolean", "ID"}
+        for f in (t.get("fields") or [])[:8]:
+            ret, is_list, _ = _unwrap_type(f.get("type"))
+            if is_list:
+                continue
             ret_t = self._type(ret)
-            if ret_t and ret_t.get("kind") == "SCALAR":
+            is_scalar = (
+                ret in builtin_scalars
+                or (ret_t and ret_t.get("kind") == "SCALAR")
+                or (ret_t and ret_t.get("kind") == "ENUM")
+            )
+            if is_scalar:
                 picks.append(f["name"])
             if len(picks) >= 3:
                 break

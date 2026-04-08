@@ -579,11 +579,15 @@ async def cve_enrich_dependencies(path: str, limit: int = 100, min_score: float 
 
     semaphore = asyncio.Semaphore(8)
 
-    async def _lookup(dep: tuple[str, str, str]) -> tuple[tuple[str, str, str], list[dict[str, Any]]]:
+    async def _lookup(
+        dep: tuple[str, str, str],
+    ) -> tuple[tuple[str, str, str], list[dict[str, Any]]]:
         name, version, ecosystem = dep
         async with semaphore:
             vuln_ids = await cve_mod.lookup_package(name, version, ecosystem)
-        cve_ids = sorted({vid for vid in vuln_ids if isinstance(vid, str) and vid.startswith("CVE-")})
+        cve_ids = sorted(
+            {vid for vid in vuln_ids if isinstance(vid, str) and vid.startswith("CVE-")}
+        )
         if not cve_ids:
             return dep, []
         records = await cve_mod.lookup_cves(cve_ids, concurrency=6)
@@ -1001,7 +1005,9 @@ def kg_ingest_httpx_jsonl(path: str, scanner_hint: str = "httpx") -> str:
 
         port = row.get("port") or parsed_url.port
         try:
-            port_int = int(port) if port is not None else (443 if parsed_url.scheme == "https" else 80)
+            port_int = (
+                int(port) if port is not None else (443 if parsed_url.scheme == "https" else 80)
+            )
         except (TypeError, ValueError):
             port_int = 443 if parsed_url.scheme == "https" else 80
 
@@ -1324,7 +1330,9 @@ def kg_analyze_cookie_value(
 
 
 @tool
-def kg_scan_solidity(path: str, min_severity: str = "low", scanner_hint: str = "solidity-patterns") -> str:
+def kg_scan_solidity(
+    path: str, min_severity: str = "low", scanner_hint: str = "solidity-patterns"
+) -> str:
     """Scan Solidity source with offline heuristics and ingest findings."""
     source_path = Path(path)
     if not source_path.exists():
@@ -1634,7 +1642,10 @@ def suggest_objectives_from_chains(
         phase = "initial-access"
         if any(step.node.kind in {NodeKind.CREDENTIAL, NodeKind.SECRET} for step in chain.steps):
             phase = "post-exploit"
-        elif "admin" in chain.crown_jewel.label.lower() or "domain" in chain.crown_jewel.label.lower():
+        elif (
+            "admin" in chain.crown_jewel.label.lower()
+            or "domain" in chain.crown_jewel.label.lower()
+        ):
             phase = "post-exploit"
 
         title = f"Exploit chain {idx}: {chain.entrypoint.label} -> {chain.crown_jewel.label}"

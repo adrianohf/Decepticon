@@ -54,7 +54,9 @@ def extract_timeline(graph: KnowledgeGraph) -> list[TimelineEvent]:
                     type_name=f"{node.kind.value}:update",
                     label=node.label,
                     severity=node.props.get("severity"),
-                    validated=bool(node.props.get("validated")) if "validated" in node.props else None,
+                    validated=bool(node.props.get("validated"))
+                    if "validated" in node.props
+                    else None,
                 )
             )
     for edge in graph.edges.values():

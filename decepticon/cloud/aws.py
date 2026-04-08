@@ -122,7 +122,9 @@ def analyze_iam_policy(policy: str | dict[str, Any]) -> list[IAMFinding]:
         try:
             data = json.loads(policy)
         except json.JSONDecodeError:
-            return [IAMFinding(id="iam.parse-error", severity="info", title="Not valid JSON", detail="")]
+            return [
+                IAMFinding(id="iam.parse-error", severity="info", title="Not valid JSON", detail="")
+            ]
     else:
         data = policy
 

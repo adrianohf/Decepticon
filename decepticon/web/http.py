@@ -77,7 +77,11 @@ class HTTPResponse:
 
     def text(self, max_chars: int = 4000) -> str:
         text = self.body.decode("utf-8", errors="replace")
-        return text if len(text) <= max_chars else text[:max_chars] + f"\n[...{len(text) - max_chars} truncated]"
+        return (
+            text
+            if len(text) <= max_chars
+            else text[:max_chars] + f"\n[...{len(text) - max_chars} truncated]"
+        )
 
 
 # ── History ─────────────────────────────────────────────────────────────

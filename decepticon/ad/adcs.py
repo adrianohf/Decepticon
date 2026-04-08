@@ -80,7 +80,13 @@ def _template_analysis(name: str, template: dict[str, Any]) -> list[ADCSFinding]
     manager_approval = any("manager approval" in f for f in flags)
     authorised_signatures = (template.get("Authorized Signatures Required") or 0) > 0
 
-    if supplies_subject and auth_eku and _has_low_priv(enroll_rights) and not manager_approval and not authorised_signatures:
+    if (
+        supplies_subject
+        and auth_eku
+        and _has_low_priv(enroll_rights)
+        and not manager_approval
+        and not authorised_signatures
+    ):
         findings.append(
             ADCSFinding(
                 template=name,

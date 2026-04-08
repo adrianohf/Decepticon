@@ -77,11 +77,7 @@ def metadata_endpoints(provider: str = "") -> str:
     Pass a provider filter (aws / gcp / azure / oracle / alibaba /
     digitalocean / kubernetes) to narrow the list.
     """
-    items = [
-        e.to_dict()
-        for e in METADATA_ENDPOINTS
-        if not provider or e.provider == provider
-    ]
+    items = [e.to_dict() for e in METADATA_ENDPOINTS if not provider or e.provider == provider]
     return _json({"count": len(items), "endpoints": items})
 
 

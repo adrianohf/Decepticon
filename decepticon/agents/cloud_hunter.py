@@ -19,6 +19,7 @@ from decepticon.core.config import load_config
 from decepticon.llm import LLMFactory
 from decepticon.middleware import SafeCommandMiddleware
 from decepticon.middleware.skills import DecepticonSkillsMiddleware
+from decepticon.references.tools import REFERENCES_TOOLS
 from decepticon.research.tools import RESEARCH_TOOLS
 from decepticon.tools.bash import bash
 from decepticon.tools.bash.bash import set_sandbox
@@ -43,9 +44,7 @@ def create_cloud_hunter_agent():
 
     middleware = [
         SafeCommandMiddleware(),
-        DecepticonSkillsMiddleware(
-            backend=backend, sources=["/skills/cloud/", "/skills/shared/"]
-        ),
+        DecepticonSkillsMiddleware(backend=backend, sources=["/skills/cloud/", "/skills/shared/"]),
         FilesystemMiddleware(backend=backend),
     ]
     if fallback_models:
@@ -58,7 +57,7 @@ def create_cloud_hunter_agent():
         ]
     )
 
-    tools = [*CLOUD_TOOLS, *RESEARCH_TOOLS, bash]
+    tools = [*CLOUD_TOOLS, *RESEARCH_TOOLS, *REFERENCES_TOOLS, bash]
     agent = create_agent(
         llm,
         system_prompt=system_prompt,

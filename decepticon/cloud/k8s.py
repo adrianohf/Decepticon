@@ -23,8 +23,23 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-_DANGEROUS_CAPS = {"SYS_ADMIN", "SYS_PTRACE", "NET_ADMIN", "NET_RAW", "SYS_MODULE", "DAC_READ_SEARCH"}
-_DANGEROUS_PATHS = {"/", "/var/run/docker.sock", "/var/lib/kubelet", "/proc", "/etc", "/root", "/var"}
+_DANGEROUS_CAPS = {
+    "SYS_ADMIN",
+    "SYS_PTRACE",
+    "NET_ADMIN",
+    "NET_RAW",
+    "SYS_MODULE",
+    "DAC_READ_SEARCH",
+}
+_DANGEROUS_PATHS = {
+    "/",
+    "/var/run/docker.sock",
+    "/var/lib/kubelet",
+    "/proc",
+    "/etc",
+    "/root",
+    "/var",
+}
 
 
 @dataclass
@@ -92,7 +107,16 @@ def analyze_k8s_manifest(manifest: str | dict[str, Any] | list[Any]) -> list[K8s
         try:
             parsed = json.loads(manifest)
         except json.JSONDecodeError:
-            return [K8sFinding(id="k8s.parse-error", severity="info", kind="?", name="?", title="Not valid JSON (YAML not parsed here)", detail="")]
+            return [
+                K8sFinding(
+                    id="k8s.parse-error",
+                    severity="info",
+                    kind="?",
+                    name="?",
+                    title="Not valid JSON (YAML not parsed here)",
+                    detail="",
+                )
+            ]
     else:
         parsed = manifest
 
@@ -222,7 +246,9 @@ def analyze_k8s_manifest(manifest: str | dict[str, Any] | list[Any]) -> list[K8s
                         detail="allowPrivilegeEscalation: true lets setuid binaries elevate within the container.",
                     )
                 )
-            if sc.get("runAsUser") == 0 or (sc.get("runAsNonRoot") is False and "runAsUser" not in sc):
+            if sc.get("runAsUser") == 0 or (
+                sc.get("runAsNonRoot") is False and "runAsUser" not in sc
+            ):
                 idx += 1
                 findings.append(
                     K8sFinding(

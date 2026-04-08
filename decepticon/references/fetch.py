@@ -22,7 +22,6 @@ from typing import Any
 
 from decepticon.references.catalog import REFERENCES, ReferenceEntry
 
-
 CACHE_ROOT = Path(os.environ.get("DECEPTICON_REFERENCES_ROOT", "/workspace/.references"))
 
 
@@ -66,9 +65,7 @@ def cache_status(slug: str, *, root: Path | None = None) -> ReferenceCache:
     path = cache_path(slug, root=root)
     present = path.exists()
     size = _dir_size(path) if present else 0
-    return ReferenceCache(
-        slug=slug, url=entry.url, path=path, present=present, size_bytes=size
-    )
+    return ReferenceCache(slug=slug, url=entry.url, path=path, present=present, size_bytes=size)
 
 
 def _dir_size(path: Path) -> int:

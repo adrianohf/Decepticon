@@ -123,7 +123,7 @@ _PATTERNS: tuple[_Pattern, ...] = (
             "zero-address signatures as valid."
         ),
         cwe="CWE-347",
-        recommendation="require(recovered != address(0), \"bad sig\") immediately after ecrecover.",
+        recommendation='require(recovered != address(0), "bad sig") immediately after ecrecover.',
     ),
     _Pattern(
         rule="proxy.uninitialized-impl",
@@ -150,11 +150,15 @@ _PATTERNS: tuple[_Pattern, ...] = (
         recommendation="Add an access modifier, or comment why it is intentionally permissionless.",
     ),
     _Pattern(
+        # Matches a narrowing cast expression like `uint128(big)` where the
+        # argument is an identifier. We can't prove the source is uint256
+        # from syntax alone, so this is a best-effort heuristic — the agent
+        # confirms via Slither.
         rule="math.unchecked-cast",
-        regex=re.compile(r"uint(8|16|32|64|128)\s*\(\s*uint256\s+\w+\s*\)"),
+        regex=re.compile(r"\buint(?:8|16|32|64|128)\s*\(\s*\w+\s*\)"),
         severity=Severity.MEDIUM,
         description=(
-            "Narrowing uint256 → smaller uint without SafeCast. Values above the target range "
+            "Narrowing uint → smaller uint without SafeCast. Values above the target range "
             "wrap silently and can bypass checks."
         ),
         cwe="CWE-197",

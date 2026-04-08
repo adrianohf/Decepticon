@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
@@ -21,7 +20,6 @@ from decepticon.references.fetch import (
 )
 from decepticon.references.payloads import (
     BUNDLED_PAYLOADS,
-    payloads_by_class,
     search_payloads,
 )
 
@@ -107,9 +105,7 @@ def ref_grep(slug: str, pattern: str, max_results: int = 30) -> str:
             "slug": slug,
             "pattern": pattern,
             "count": len(hits),
-            "hits": [
-                {"file": f, "line": l, "snippet": s} for f, l, s in hits
-            ],
+            "hits": [{"file": fp, "line": ln, "snippet": snip} for fp, ln, snip in hits],
         }
     )
 
@@ -129,9 +125,7 @@ def payload_search(vuln_class: str = "", keyword: str = "") -> str:
         # List everything, capped
         items = list(BUNDLED_PAYLOADS)[:80]
     else:
-        items = search_payloads(
-            vuln_class=vuln_class or None, keyword=keyword or None
-        )
+        items = search_payloads(vuln_class=vuln_class or None, keyword=keyword or None)
     return _json({"count": len(items), "payloads": [p.to_dict() for p in items]})
 
 
@@ -144,9 +138,7 @@ def payload_classes() -> str:
     return _json(
         {
             "count": len(classes),
-            "classes": [
-                {"vuln_class": k, "count": v} for k, v in sorted(classes.items())
-            ],
+            "classes": [{"vuln_class": k, "count": v} for k, v in sorted(classes.items())],
         }
     )
 

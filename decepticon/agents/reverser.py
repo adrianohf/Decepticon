@@ -29,6 +29,7 @@ from decepticon.core.config import load_config
 from decepticon.llm import LLMFactory
 from decepticon.middleware import SafeCommandMiddleware
 from decepticon.middleware.skills import DecepticonSkillsMiddleware
+from decepticon.references.tools import REFERENCES_TOOLS
 from decepticon.research.tools import RESEARCH_TOOLS
 from decepticon.reversing.tools import REVERSING_TOOLS
 from decepticon.tools.bash import bash
@@ -69,7 +70,7 @@ def create_reverser_agent():
         ]
     )
 
-    tools = [*REVERSING_TOOLS, *RESEARCH_TOOLS, bash]
+    tools = [*REVERSING_TOOLS, *RESEARCH_TOOLS, *REFERENCES_TOOLS, bash]
     agent = create_agent(
         llm,
         system_prompt=system_prompt,

@@ -8,7 +8,7 @@ and function boundaries rather than trying to be full-project analyses.
 
 from __future__ import annotations
 
-_GHIDRA_RECON = '''# Ghidra headless recon script — dumps symbols, xrefs, strings, calls
+_GHIDRA_RECON = """# Ghidra headless recon script — dumps symbols, xrefs, strings, calls
 # Usage:
 #   analyzeHeadless /tmp/ghidra_proj proj -import {binary} -postScript {script_name}
 #   (requires Ghidra installed; the wrapper can `apt install ghidra` or download)
@@ -41,7 +41,7 @@ for sym in st.getExternalSymbols():
     print("extern {{}} <- {{}}".format(sym.getName(), sym.getAddress()))
 
 print("[+] Done.")
-'''
+"""
 
 
 _R2_RECON = r"""# radare2 recon script — paste into `r2 -i`

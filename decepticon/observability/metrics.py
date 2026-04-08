@@ -87,7 +87,20 @@ class Gauge:
 
 
 _DEFAULT_BUCKETS: tuple[float, ...] = (
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, float("inf"),
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    float("inf"),
 )
 
 
@@ -148,9 +161,7 @@ class Registry:
         self.register(g)
         return g
 
-    def histogram(
-        self, name: str, help: str, buckets: Iterable[float] | None = None
-    ) -> Histogram:
+    def histogram(self, name: str, help: str, buckets: Iterable[float] | None = None) -> Histogram:
         h = Histogram(
             name=name,
             help=help,

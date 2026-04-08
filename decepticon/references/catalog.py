@@ -7,7 +7,7 @@ active engagement. Adding noise makes the router worse.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -321,6 +321,23 @@ REFERENCES: tuple[ReferenceEntry, ...] = (
             "selection prompting and exploitation workflow patterns."
         ),
     ),
+    ReferenceEntry(
+        slug="excalibur",
+        name="Excalibur",
+        url="https://anonymous.4open.science/r/Excalibur-FA7D/README.md",
+        category="research",
+        topics=("llm", "agent", "academic", "pentest", "research", "benchmark"),
+        use_cases=(
+            "Academic reference implementation — compare methodology",
+            "Benchmark design for LLM-driven pentest tasks",
+            "Experimental methodology for autonomous security work",
+        ),
+        fetch_hint="web",
+        description=(
+            "Anonymous double-blind academic artifact for an LLM pentest "
+            "agent — reference for benchmark design and methodology."
+        ),
+    ),
 )
 
 
@@ -336,9 +353,7 @@ def references_for_topic(topic: str) -> list[ReferenceEntry]:
     """Return entries whose topic tuple contains ``topic`` (case-insensitive)."""
     needle = topic.lower()
     return [
-        r
-        for r in REFERENCES
-        if any(needle == t.lower() or needle in t.lower() for t in r.topics)
+        r for r in REFERENCES if any(needle == t.lower() or needle in t.lower() for t in r.topics)
     ]
 
 
