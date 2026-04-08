@@ -268,7 +268,12 @@ def search(
     cwe_norm = ""
     if cwe:
         m = _CWE.search(cwe)
-        cwe_norm = f"CWE-{m.group(1)}" if m else cwe.upper()
+        if m:
+            cwe_norm = f"CWE-{m.group(1)}"
+        elif cwe.strip().isdigit():
+            cwe_norm = f"CWE-{cwe.strip()}"
+        else:
+            cwe_norm = cwe.upper()
     severity_norm = severity.lower() if severity else None
     program_norm = program.lower() if program else None
     out: list[BugReport] = []

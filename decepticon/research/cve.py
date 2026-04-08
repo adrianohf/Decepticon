@@ -59,6 +59,10 @@ class Exploitability:
 
     ``score`` ∈ [0, 10] blends CVSS base, EPSS probability, and KEV flag
     into one monotonic rank. Higher = more likely to actually get exploited.
+
+    ``poc_links`` is populated from the local ``cve_poc_index`` when the
+    ``trickest-cve`` / ``penetration-testing-poc`` reference caches have
+    been hydrated. Empty otherwise — it's a pure enrichment field.
     """
 
     cve_id: str
@@ -71,6 +75,7 @@ class Exploitability:
     published: str | None = None
     summary: str = ""
     references: list[str] = field(default_factory=list)
+    poc_links: list[str] = field(default_factory=list)
     source: str = "nvd+epss"
     fetched_at: float = field(default_factory=time.time)
 
@@ -258,6 +263,36 @@ def _parse_epss(data: dict[str, Any]) -> dict[str, Any]:
     return {"epss": epss, "epss_percentile": pct}
 
 
+# ── Local enrichment (PoC link index) ──────────────────────────────────
+
+
+def _resolve_poc_links(cve_id: str) -> list[str]:
+    """Return PoC URLs for ``cve_id`` from the local index, if present.
+
+    Deferred import so the ``research`` package stays importable when
+    ``decepticon.references`` is not yet on the path (e.g. smaller
+    library installs or tests that stub the references package).
+    """
+    try:
+        from decepticon.references.cve_poc_index import lookup_poc
+    except ImportError:  # pragma: no cover
+        return []
+    try:
+        return lookup_poc(cve_id)
+    except Exception as e:  # pragma: no cover — defensive
+        log.debug("cve_poc_index lookup failed for %s: %s", cve_id, e)
+        return []
+
+
+def _rehydrate(cached: dict[str, Any]) -> Exploitability:
+    """Reconstruct an ``Exploitability`` from a cache dict, tolerating
+    missing or extra keys across schema evolutions.
+    """
+    allowed = {f.name for f in Exploitability.__dataclass_fields__.values()}
+    clean: dict[str, Any] = {k: v for k, v in cached.items() if k in allowed}
+    return Exploitability(**clean)
+
+
 # ── Public API ──────────────────────────────────────────────────────────
 
 
@@ -279,7 +314,10 @@ async def lookup_cve(
     cache = cache or _Cache()
     cached = cache.get(f"cve:{cve_id}")
     if cached is not None:
-        exp = Exploitability(**{k: v for k, v in cached.items() if k != "score"})
+        exp = _rehydrate(cached)
+        # poc_links are derived locally — refresh from index so a
+        # newly-hydrated reference cache is picked up immediately.
+        exp.poc_links = _resolve_poc_links(cve_id)
         return exp
 
     own_client = client is None
@@ -306,6 +344,7 @@ async def lookup_cve(
         published=nvd["published"],
         summary=nvd["summary"],
         references=nvd["references"],
+        poc_links=_resolve_poc_links(cve_id),
     )
     cache.set(f"cve:{cve_id}", exp.to_dict())
     return exp

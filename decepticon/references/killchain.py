@@ -93,16 +93,45 @@ class ToolEntry:
         }
 
 
+_CANONICAL_PHASES: frozenset[str] = frozenset(
+    {
+        "recon",
+        "weaponization",
+        "delivery",
+        "exploitation",
+        "persistence",
+        "privilege-escalation",
+        "defense-evasion",
+        "credential-access",
+        "discovery",
+        "lateral-movement",
+        "collection",
+        "command-and-control",
+        "exfiltration",
+        "impact",
+        "misc",
+    }
+)
+
+
 def normalize_phase(raw: str) -> str:
     """Fold any heading variant into the canonical phase slug."""
-    key = re.sub(r"[^a-z &]", "", raw.lower()).strip()
+    if raw in _CANONICAL_PHASES:
+        return raw
+    lowered = raw.strip().lower()
+    if lowered in _CANONICAL_PHASES:
+        return lowered
+    # Hyphenated canonical form like "credential-access"
+    if lowered.replace("-", " ") in _PHASE_ALIASES:
+        return _PHASE_ALIASES[lowered.replace("-", " ")]
+    key = re.sub(r"[^a-z0-9 &]", "", lowered).strip()
     key = re.sub(r"\s+", " ", key)
     if key in _PHASE_ALIASES:
         return _PHASE_ALIASES[key]
     for alias, canonical in _PHASE_ALIASES.items():
         if alias in key:
             return canonical
-    return re.sub(r"[^a-z]+", "-", key).strip("-") or "misc"
+    return re.sub(r"[^a-z0-9]+", "-", key).strip("-") or "misc"
 
 
 def _load_yaml_fallback() -> list[ToolEntry]:
