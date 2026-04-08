@@ -347,10 +347,19 @@ def save_graph(graph: KnowledgeGraph, path: Path | str = DEFAULT_PATH) -> Path:
 
     Uses write-tmp + rename so a crash mid-write never corrupts the file.
     Parent directory is created on demand.
+
+    Serialised without ``indent`` — the graph is machine-read on every
+    @tool invocation (at 10k+ nodes this hits tens of MB of Pydantic
+    validation). Compact output cuts parse time and disk I/O roughly
+    in half. Set ``DECEPTICON_KG_INDENT=1`` to restore pretty-printing
+    for human debugging.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    payload = graph.model_dump_json(indent=2)
+    if os.environ.get("DECEPTICON_KG_INDENT"):
+        payload = graph.model_dump_json(indent=2)
+    else:
+        payload = graph.model_dump_json()
     fd, tmp = tempfile.mkstemp(prefix=p.name + ".", suffix=".tmp", dir=str(p.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

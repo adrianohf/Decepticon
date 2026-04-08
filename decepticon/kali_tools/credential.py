@@ -10,9 +10,9 @@ from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
     FlagInjectionError,
+    arun_command,
     assert_not_flag,
     format_result,
-    run_command,
     scratch_file,
 )
 
@@ -27,7 +27,7 @@ def _flag_error(tool_name: str, reason: str) -> str:
 
 
 @tool
-def hydra_brute(
+async def hydra_brute(
     target: str,
     service: str,
     userlist: str,
@@ -68,13 +68,13 @@ def hydra_brute(
     if port:
         argv.extend(["-s", str(port)])
     argv.extend(["--", target, service])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target, "service": service})
 
 
 @tool
-def crackmapexec_run(
+async def crackmapexec_run(
     protocol: str,
     target: str,
     username: str = "",
@@ -116,12 +116,12 @@ def crackmapexec_run(
         argv.extend(["-M", module])
     if command:
         argv.extend(["-x", command])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     return format_result(result, extra={"protocol": protocol, "target": target})
 
 
 @tool
-def getnpusers_asrep(
+async def getnpusers_asrep(
     domain: str,
     dc_ip: str,
     usersfile: str = "",
@@ -153,13 +153,13 @@ def getnpusers_asrep(
         argv.extend(["-usersfile", usersfile])
     if request:
         argv.append("-request")
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"domain": domain, "dc_ip": dc_ip})
 
 
 @tool
-def getuserspns_kerberoast(
+async def getuserspns_kerberoast(
     domain: str,
     username: str,
     password: str,
@@ -188,7 +188,7 @@ def getuserspns_kerberoast(
         "-outputfile",
         str(out),
     ]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"domain": domain, "username": username, "dc_ip": dc_ip})
 

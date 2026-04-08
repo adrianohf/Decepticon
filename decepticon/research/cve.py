@@ -169,7 +169,13 @@ class _Cache:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+            # Compact JSON — this file is machine-read and can grow
+            # to thousands of cached CVE records. No indent saves
+            # ~30% on disk and parse time.
+            tmp.write_text(
+                json.dumps(self._data, separators=(",", ":"), ensure_ascii=False),
+                encoding="utf-8",
+            )
             tmp.replace(self.path)
             self._dirty = False
         except OSError as e:

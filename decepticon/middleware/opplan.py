@@ -20,6 +20,7 @@ Key differences from Claude Code:
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any, NotRequired, cast, override
 
 from langchain.agents import AgentState
@@ -137,6 +138,24 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
 # ── Formatting Helpers ────────────────────────────────────────────────
 
 
+#: Maximum number of objective rows ``_format_opplan_status`` will
+#: render into the system prompt. Past this cap, completed/cancelled
+#: objectives collapse into a single summary line and only the
+#: actionable (pending / in-progress / blocked) ones retain a full
+#: table row. Overridable via ``DECEPTICON_OPPLAN_MAX_ROWS``.
+_OPPLAN_MAX_ROWS = int(os.environ.get("DECEPTICON_OPPLAN_MAX_ROWS", "40"))
+
+_STATUS_MARKERS = {
+    "completed": "COMPLETED",
+    "blocked": "BLOCKED",
+    "cancelled": "CANCELLED",
+    "in-progress": ">>IN-PROGRESS<<",
+    "pending": "pending",
+}
+
+_TERMINAL_STATUSES = {"completed", "cancelled"}
+
+
 def _format_opplan_status(
     objectives: list[dict],
     engagement_name: str,
@@ -145,42 +164,84 @@ def _format_opplan_status(
     """Format OPPLAN for system prompt injection (concise battle tracker).
 
     Injected every LLM call via wrap_model_call, providing dynamic
-    situational awareness — the red team equivalent of a battle tracker.
+    situational awareness — the red team equivalent of a battle
+    tracker. To bound token cost on long / deeply-expanded plans we
+    trim terminal objectives (completed / cancelled) from the main
+    table once the total row count exceeds ``_OPPLAN_MAX_ROWS``.
     """
     total = len(objectives)
-    completed = sum(1 for o in objectives if o.get("status") == "completed")
-    blocked = sum(1 for o in objectives if o.get("status") == "blocked")
-    in_progress = sum(1 for o in objectives if o.get("status") == "in-progress")
-    pending = sum(1 for o in objectives if o.get("status") == "pending")
+    completed = 0
+    blocked = 0
+    in_progress = 0
+    pending = 0
+    cancelled = 0
+    for o in objectives:
+        status = o.get("status") or ""
+        if status == "completed":
+            completed += 1
+        elif status == "blocked":
+            blocked += 1
+        elif status == "in-progress":
+            in_progress += 1
+        elif status == "pending":
+            pending += 1
+        elif status == "cancelled":
+            cancelled += 1
 
     actionable = [o for o in objectives if o.get("status") in ("pending", "in-progress")]
     actionable.sort(key=lambda o: o.get("priority", 999))
     next_obj = actionable[0] if actionable else None
 
+    progress_line = (
+        f"Progress: {completed}/{total} completed, {blocked} blocked, "
+        f"{in_progress} in-progress, {pending} pending"
+    )
+    if cancelled:
+        progress_line += f", {cancelled} cancelled"
+
     lines = [
         "<OPPLAN_STATUS>",
         f"Engagement: {engagement_name}",
         f"Threat Profile: {threat_profile}",
-        f"Progress: {completed}/{total} completed, {blocked} blocked, "
-        f"{in_progress} in-progress, {pending} pending",
+        progress_line,
         "",
         "| ID | Phase | Title | Status | Priority | Owner |",
         "|---|---|---|---|---|---|",
     ]
 
-    for o in sorted(objectives, key=lambda x: x.get("priority", 999)):
-        status_marker = {
-            "completed": "COMPLETED",
-            "blocked": "BLOCKED",
-            "in-progress": ">>IN-PROGRESS<<",
-            "pending": "pending",
-        }.get(o.get("status", ""), o.get("status", ""))
+    # Render actionable objectives in full, then terminal ones only
+    # until the row budget is exhausted.
+    sorted_objectives = sorted(objectives, key=lambda x: x.get("priority", 999))
+    actionable_rows: list[dict[str, Any]] = []
+    terminal_rows: list[dict[str, Any]] = []
+    for o in sorted_objectives:
+        if o.get("status") in _TERMINAL_STATUSES:
+            terminal_rows.append(o)
+        else:
+            actionable_rows.append(o)
 
+    rendered = 0
+    for o in actionable_rows:
+        status_marker = _STATUS_MARKERS.get(o.get("status", ""), o.get("status", ""))
         lines.append(
             f"| {o.get('id', '?')} | {o.get('phase', '?')} | "
             f"{o.get('title', '?')} | {status_marker} | "
             f"{o.get('priority', '?')} | {o.get('owner') or '-'} |"
         )
+        rendered += 1
+
+    remaining_budget = max(0, _OPPLAN_MAX_ROWS - rendered)
+    shown_terminal = terminal_rows[:remaining_budget]
+    for o in shown_terminal:
+        status_marker = _STATUS_MARKERS.get(o.get("status", ""), o.get("status", ""))
+        lines.append(
+            f"| {o.get('id', '?')} | {o.get('phase', '?')} | "
+            f"{o.get('title', '?')} | {status_marker} | "
+            f"{o.get('priority', '?')} | {o.get('owner') or '-'} |"
+        )
+    hidden = len(terminal_rows) - len(shown_terminal)
+    if hidden > 0:
+        lines.append(f"| … | … | _{hidden} more terminal objectives_ | … | … | … |")
 
     if next_obj:
         lines.extend(

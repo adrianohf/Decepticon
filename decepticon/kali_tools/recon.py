@@ -13,9 +13,9 @@ from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
     FlagInjectionError,
+    arun_command,
     assert_not_flag,
     format_result,
-    run_command,
     scratch_file,
 )
 
@@ -34,7 +34,7 @@ def _flag_error(field: str, value: str) -> str:
 
 
 @tool
-def subfinder_enum(domain: str, timeout: float = 180.0, sources: str = "") -> str:
+async def subfinder_enum(domain: str, timeout: float = 180.0, sources: str = "") -> str:
     """Run ``subfinder`` for passive subdomain discovery.
 
     Writes plaintext subdomains to a scratch file and returns the path
@@ -56,7 +56,7 @@ def subfinder_enum(domain: str, timeout: float = 180.0, sources: str = "") -> st
     argv = ["subfinder", "-d", domain, "-silent", "-o", str(out)]
     if sources:
         argv.extend(["-sources", sources])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     count = 0
     if out.exists():
         count = sum(1 for line in out.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -65,7 +65,7 @@ def subfinder_enum(domain: str, timeout: float = 180.0, sources: str = "") -> st
 
 
 @tool
-def amass_enum(
+async def amass_enum(
     domain: str,
     passive: bool = True,
     timeout: float = 600.0,
@@ -83,7 +83,7 @@ def amass_enum(
     argv = ["amass", "enum", "-d", domain, "-o", str(out)]
     if passive:
         argv.append("-passive")
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     count = 0
     if out.exists():
         count = sum(1 for line in out.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -95,7 +95,7 @@ def amass_enum(
 
 
 @tool
-def dnsx_resolve(
+async def dnsx_resolve(
     hosts_file: str = "",
     hosts: str = "",
     record_types: str = "a,aaaa,cname",
@@ -124,7 +124,7 @@ def dnsx_resolve(
     if hosts:
         # Use -d for inline comma-separated input
         argv.extend(["-d", hosts])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     lines = 0
     if out.exists():
@@ -133,7 +133,7 @@ def dnsx_resolve(
 
 
 @tool
-def httpx_probe(
+async def httpx_probe(
     hosts_file: str = "",
     targets: str = "",
     status_code: bool = True,
@@ -167,7 +167,7 @@ def httpx_probe(
         argv.extend(["-l", hosts_file])
     if targets:
         argv.extend(["-u", targets])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     lines = 0
     if out.exists():
@@ -176,7 +176,7 @@ def httpx_probe(
 
 
 @tool
-def katana_crawl(
+async def katana_crawl(
     url: str,
     depth: int = 3,
     js_crawl: bool = True,
@@ -209,7 +209,7 @@ def katana_crawl(
         argv.append("-jc")
     if headless:
         argv.append("-headless")
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     lines = 0
     if out.exists():

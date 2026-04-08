@@ -7,6 +7,8 @@ the right command lines without ever invoking real binaries.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from collections.abc import Iterator
 from typing import Any
@@ -38,13 +40,20 @@ class FakeRunner:
         self.calls: list[list[str]] = []
         self.next_result: CommandResult | None = None
 
-    def run(self, argv, *, timeout=120.0, cwd=None, env=None):
+    def _result_for(self, argv: list[str]) -> CommandResult:
         self.calls.append(list(argv))
         if self.next_result is not None:
             r = self.next_result
             r.command = list(argv)
             return r
         return CommandResult(command=list(argv), ok=True, returncode=0)
+
+    def run(self, argv, *, timeout=120.0, cwd=None, env=None):
+        return self._result_for(list(argv))
+
+    async def arun(self, argv, *, timeout=120.0, cwd=None, env=None):
+        # Emulate an async runner for the async @tool wrappers.
+        return self._result_for(list(argv))
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +65,22 @@ def fake_runner() -> Iterator[FakeRunner]:
 
 
 def _invoke(tool: Any, **kwargs: Any) -> dict[str, Any]:
-    return json.loads(tool.invoke(kwargs))
+    """Invoke a Kali @tool wrapper (sync or async) from a test.
+
+    The Kali wrappers were moved to ``async def``. ``tool.invoke()``
+    still drives them but it will raise when an event loop is already
+    running (pytest-asyncio mode=auto). Detect that and route through
+    ``tool.ainvoke`` instead — the test still returns synchronously by
+    running the coroutine to completion in-thread.
+    """
+    try:
+        raw = tool.invoke(kwargs)
+    except (RuntimeError, NotImplementedError):
+        # Running inside an active loop — drive the async path.
+        raw = asyncio.run(tool.ainvoke(kwargs))
+    if inspect.iscoroutine(raw):
+        raw = asyncio.get_event_loop().run_until_complete(raw)
+    return json.loads(raw)
 
 
 class TestPackageContents:

@@ -6,9 +6,9 @@ from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
     FlagInjectionError,
+    arun_command,
     assert_not_flag,
     format_result,
-    run_command,
     scratch_file,
 )
 
@@ -23,7 +23,7 @@ def _flag_error(tool_name: str, reason: str) -> str:
 
 
 @tool
-def nmap_scan(
+async def nmap_scan(
     target: str,
     ports: str = "1-10000",
     service_version: bool = True,
@@ -51,13 +51,13 @@ def nmap_scan(
     if scripts:
         argv.extend(["--script", scripts])
     argv.extend(["--", target])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target, "ports": ports})
 
 
 @tool
-def masscan_scan(
+async def masscan_scan(
     target: str,
     ports: str = "0-65535",
     rate: int = 5000,
@@ -85,13 +85,13 @@ def masscan_scan(
         "--",
         target,
     ]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target, "ports": ports, "rate": rate})
 
 
 @tool
-def rustscan_scan(
+async def rustscan_scan(
     target: str,
     ports: str = "1-65535",
     batch_size: int = 5000,
@@ -119,7 +119,7 @@ def rustscan_scan(
         "--accessible",
         "--no-config",
     ]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     return format_result(result, extra={"target": target, "ports": ports})
 
 

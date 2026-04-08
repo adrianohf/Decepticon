@@ -37,15 +37,31 @@ _INDEX_FILENAME = "poc_index.json"
 
 @dataclass
 class PoCIndex:
-    """In-memory map of CVE ID to a de-duplicated list of PoC URLs."""
+    """In-memory map of CVE ID to a de-duplicated list of PoC URLs.
+
+    The public ``entries`` attribute is a ``{cve_id: [urls]}`` mapping
+    that preserves insertion order (stable across serialisation). For
+    O(1) membership checks during bulk ingestion we maintain a parallel
+    ``_seen`` ``{cve_id: set[url]}`` — a heavily-PoC'd CVE like
+    Log4Shell can carry 100+ URLs, and ``url in list`` on every call
+    dominates ``build_index`` wall time without it.
+    """
 
     entries: dict[str, list[str]] = field(default_factory=dict)
+    _seen: dict[str, set[str]] = field(default_factory=dict, repr=False, compare=False)
 
     def add(self, cve_id: str, url: str) -> None:
         key = cve_id.upper()
-        bucket = self.entries.setdefault(key, [])
-        if url not in bucket:
-            bucket.append(url)
+        bucket = self.entries.get(key)
+        if bucket is None:
+            bucket = []
+            self.entries[key] = bucket
+            self._seen[key] = set()
+        seen = self._seen.setdefault(key, set(bucket))
+        if url in seen:
+            return
+        bucket.append(url)
+        seen.add(url)
 
     def lookup(self, cve_id: str) -> list[str]:
         return list(self.entries.get(cve_id.upper(), ()))
@@ -201,8 +217,17 @@ def save_index(index: PoCIndex, *, root: Path | None = None) -> Path:
     path = _index_file(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
+    # Compact form (no indent, no spaces) — this file is machine-read,
+    # can reach 20-50 MB on a fully-hydrated trickest clone, and is
+    # loaded on every process startup. Dropping indent cuts the file
+    # size ~40% and the parse time proportionally.
     tmp.write_text(
-        json.dumps(index.to_dict(), indent=2, ensure_ascii=False, sort_keys=True),
+        json.dumps(
+            index.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
         encoding="utf-8",
     )
     tmp.replace(path)

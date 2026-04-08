@@ -35,10 +35,11 @@ read from that path directly.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import os
 import shlex
-import subprocess
 import threading
 import time
 import uuid
@@ -88,7 +89,15 @@ def _truncate(text: str, *, limit: int = 8000) -> str:
 
 
 class ToolRunner(Protocol):
-    """Execution backend for Kali tool commands."""
+    """Execution backend for Kali tool commands.
+
+    Implementations expose both a sync ``run`` and an async ``arun``.
+    Async-first call paths ``await arun(...)`` so long-running tool
+    executions (nmap / nuclei / sqlmap, which can run for minutes)
+    never block the LangGraph event loop. The sync ``run`` wrapper
+    stays for tests and legacy callers and dispatches through the
+    same underlying code path.
+    """
 
     def run(
         self,
@@ -99,11 +108,41 @@ class ToolRunner(Protocol):
         env: dict[str, str] | None = None,
     ) -> CommandResult: ...
 
+    async def arun(
+        self,
+        argv: list[str],
+        *,
+        timeout: float = 120.0,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult: ...
+
+
+def _make_env(env: dict[str, str] | None) -> dict[str, str] | None:
+    if env is None:
+        return None
+    return {**os.environ, **env}
+
+
+def _file_not_found(argv: list[str], started: float, e: Exception) -> CommandResult:
+    return CommandResult(
+        command=list(argv),
+        ok=False,
+        returncode=127,
+        stderr=str(e),
+        duration_s=time.monotonic() - started,
+        notes=[f"binary not found: {argv[0]}"],
+    )
+
 
 class LocalSubprocessRunner:
-    """Direct ``subprocess.run`` — no sandbox."""
+    """Run the tool via ``asyncio.create_subprocess_exec`` — no sandbox.
 
-    def run(
+    Preserves the sync ``run`` API for tests but dispatches through
+    the asyncio path so both codepaths share identical error handling.
+    """
+
+    async def arun(
         self,
         argv: list[str],
         *,
@@ -113,43 +152,103 @@ class LocalSubprocessRunner:
     ) -> CommandResult:
         started = time.monotonic()
         try:
-            completed = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env={**os.environ, **(env or {})} if env else None,
-                check=False,
-            )
-            duration = time.monotonic() - started
-            return CommandResult(
-                command=argv,
-                ok=completed.returncode == 0,
-                returncode=completed.returncode,
-                stdout=completed.stdout or "",
-                stderr=completed.stderr or "",
-                duration_s=duration,
+                env=_make_env(env),
             )
         except FileNotFoundError as e:
+            return _file_not_found(argv, started, e)
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
             return CommandResult(
-                command=argv,
-                ok=False,
-                returncode=127,
-                stderr=str(e),
-                duration_s=time.monotonic() - started,
-                notes=[f"binary not found: {argv[0]}"],
-            )
-        except subprocess.TimeoutExpired as e:
-            return CommandResult(
-                command=argv,
+                command=list(argv),
                 ok=False,
                 returncode=124,
-                stdout=(e.stdout.decode("utf-8", "replace") if e.stdout else ""),
-                stderr=(e.stderr.decode("utf-8", "replace") if e.stderr else ""),
                 duration_s=timeout,
                 notes=[f"timeout after {timeout}s"],
             )
+        duration = time.monotonic() - started
+        rc = proc.returncode if proc.returncode is not None else 0
+        return CommandResult(
+            command=list(argv),
+            ok=rc == 0,
+            returncode=rc,
+            stdout=stdout_bytes.decode("utf-8", "replace") if stdout_bytes else "",
+            stderr=stderr_bytes.decode("utf-8", "replace") if stderr_bytes else "",
+            duration_s=duration,
+        )
+
+    def run(
+        self,
+        argv: list[str],
+        *,
+        timeout: float = 120.0,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
+        # If we're already inside a running loop (e.g. a sync ``run``
+        # path called from a coroutine), hand off to a worker thread
+        # so we don't re-enter the loop.
+        try:
+            asyncio.get_running_loop()
+            running = True
+        except RuntimeError:
+            running = False
+        if running:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(
+                    lambda: asyncio.run(self.arun(argv, timeout=timeout, cwd=cwd, env=env))
+                ).result()
+        return asyncio.run(self.arun(argv, timeout=timeout, cwd=cwd, env=env))
+
+
+def _no_sandbox_result(argv: list[str]) -> CommandResult:
+    return CommandResult(
+        command=list(argv),
+        ok=False,
+        returncode=126,
+        stderr=(
+            "DockerSandboxRunner invoked without an active sandbox — "
+            "call set_active_sandbox() before running Kali tools, or "
+            "pass sandbox=... to the DockerSandboxRunner constructor."
+        ),
+        notes=["no active sandbox"],
+    )
+
+
+def _sandbox_cmdline(argv: list[str], cwd: str | None, env: dict[str, str] | None) -> str:
+    cmd = " ".join(shlex.quote(c) for c in argv)
+    if cwd:
+        cmd = f"cd {shlex.quote(cwd)} && {cmd}"
+    if env:
+        prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
+        cmd = f"{prefix} {cmd}"
+    return cmd
+
+
+def _sandbox_result(argv: list[str], started: float, result: Any) -> CommandResult:
+    duration = time.monotonic() - started
+    stdout = getattr(result, "stdout", None) or getattr(result, "output", "") or ""
+    rc = getattr(result, "returncode", getattr(result, "exit_code", 0)) or 0
+    return CommandResult(
+        command=list(argv),
+        ok=rc == 0,
+        returncode=int(rc),
+        stdout=str(stdout),
+        stderr=str(getattr(result, "stderr", "")),
+        duration_s=duration,
+    )
 
 
 class DockerSandboxRunner:
@@ -157,14 +256,24 @@ class DockerSandboxRunner:
 
     The sandbox is looked up via the module-global bound by
     :func:`set_active_sandbox`. If no sandbox is bound, this runner
-    raises — silently falling back to local execution would be a
-    sandbox escape, so callers must bind a sandbox explicitly. Pass
-    ``sandbox`` to the constructor when you want to avoid the
-    module-global and bind per-instance instead.
+    returns a non-ok result — silently falling back to local execution
+    would be a sandbox escape, so callers must bind a sandbox
+    explicitly. Pass ``sandbox`` to the constructor when you want to
+    avoid the module-global and bind per-instance instead.
+
+    Exposes ``arun`` for async callers: if the bound sandbox provides
+    an async ``aexecute`` it is awaited directly; otherwise the sync
+    ``execute`` is pushed onto a worker thread via ``asyncio.to_thread``
+    so it never blocks the event loop.
     """
 
     def __init__(self, sandbox: Any | None = None) -> None:
         self._explicit_sandbox = sandbox
+
+    def _resolve_sandbox(self) -> Any:
+        return (
+            self._explicit_sandbox if self._explicit_sandbox is not None else get_active_sandbox()
+        )
 
     def run(
         self,
@@ -174,44 +283,57 @@ class DockerSandboxRunner:
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> CommandResult:
-        sandbox = (
-            self._explicit_sandbox if self._explicit_sandbox is not None else get_active_sandbox()
-        )
+        sandbox = self._resolve_sandbox()
         if sandbox is None:
-            return CommandResult(
-                command=list(argv),
-                ok=False,
-                returncode=126,
-                stderr=(
-                    "DockerSandboxRunner invoked without an active sandbox — "
-                    "call set_active_sandbox() before running Kali tools, or "
-                    "pass sandbox=... to the DockerSandboxRunner constructor."
-                ),
-                notes=["no active sandbox"],
-            )
+            return _no_sandbox_result(argv)
         started = time.monotonic()
-        cmd = " ".join(shlex.quote(c) for c in argv)
-        if cwd:
-            cmd = f"cd {shlex.quote(cwd)} && {cmd}"
-        if env:
-            prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
-            cmd = f"{prefix} {cmd}"
+        cmd = _sandbox_cmdline(argv, cwd, env)
         try:
             result = sandbox.execute(cmd, timeout=int(timeout))
         except Exception as e:  # pragma: no cover — defensive
             log.warning("sandbox execute failed for %s: %s", argv[0], e)
-            return LocalSubprocessRunner().run(argv, timeout=timeout, cwd=cwd, env=env)
-        duration = time.monotonic() - started
-        stdout = getattr(result, "stdout", None) or getattr(result, "output", "") or ""
-        rc = getattr(result, "returncode", getattr(result, "exit_code", 0)) or 0
-        return CommandResult(
-            command=argv,
-            ok=rc == 0,
-            returncode=int(rc),
-            stdout=str(stdout),
-            stderr=str(getattr(result, "stderr", "")),
-            duration_s=duration,
-        )
+            return CommandResult(
+                command=list(argv),
+                ok=False,
+                returncode=1,
+                stderr=f"sandbox execute failed: {e}",
+                duration_s=time.monotonic() - started,
+                notes=["sandbox execute raised"],
+            )
+        return _sandbox_result(argv, started, result)
+
+    async def arun(
+        self,
+        argv: list[str],
+        *,
+        timeout: float = 120.0,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
+        sandbox = self._resolve_sandbox()
+        if sandbox is None:
+            return _no_sandbox_result(argv)
+        started = time.monotonic()
+        cmd = _sandbox_cmdline(argv, cwd, env)
+        aexecute = getattr(sandbox, "aexecute", None)
+        try:
+            if aexecute is not None and inspect.iscoroutinefunction(aexecute):
+                result = await aexecute(cmd, timeout=int(timeout))
+            else:
+                # Push the blocking execute onto a worker thread so
+                # the event loop stays responsive during long scans.
+                result = await asyncio.to_thread(sandbox.execute, cmd, int(timeout))
+        except Exception as e:  # pragma: no cover — defensive
+            log.warning("sandbox aexecute failed for %s: %s", argv[0], e)
+            return CommandResult(
+                command=list(argv),
+                ok=False,
+                returncode=1,
+                stderr=f"sandbox aexecute failed: {e}",
+                duration_s=time.monotonic() - started,
+                notes=["sandbox aexecute raised"],
+            )
+        return _sandbox_result(argv, started, result)
 
 
 # ── Sandbox / runner binding ───────────────────────────────────────────
@@ -278,8 +400,31 @@ def run_command(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
 ) -> CommandResult:
-    """Execute via the active runner."""
+    """Execute via the active runner (sync wrapper)."""
     return get_runner().run(argv, timeout=timeout, cwd=cwd, env=env)
+
+
+async def arun_command(
+    argv: list[str],
+    *,
+    timeout: float = 120.0,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> CommandResult:
+    """Execute via the active runner without blocking the event loop.
+
+    Every Kali @tool wrapper is an ``async def`` and should call this
+    (or the runner's ``arun`` directly) rather than ``run_command``.
+    LangChain's ``StructuredTool`` handles both sync and async
+    implementations transparently on ``.invoke()`` / ``.ainvoke()``.
+    """
+    runner = get_runner()
+    arun = getattr(runner, "arun", None)
+    if arun is not None and inspect.iscoroutinefunction(arun):
+        return await arun(argv, timeout=timeout, cwd=cwd, env=env)
+    # Legacy runners without ``arun`` — push the sync call onto a
+    # worker thread so we still don't block the event loop.
+    return await asyncio.to_thread(runner.run, argv, timeout=timeout, cwd=cwd, env=env)
 
 
 class FlagInjectionError(ValueError):
@@ -346,6 +491,7 @@ __all__ = [
     "DockerSandboxRunner",
     "FlagInjectionError",
     "LocalSubprocessRunner",
+    "arun_command",
     "assert_not_flag",
     "safe_argv_value",
     "SCRATCH_DIR",

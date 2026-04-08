@@ -7,9 +7,9 @@ from langchain_core.tools import tool
 
 from decepticon.kali_tools._common import (
     FlagInjectionError,
+    arun_command,
     assert_not_flag,
     format_result,
-    run_command,
     scratch_file,
 )
 
@@ -24,7 +24,7 @@ def _flag_error(tool_name: str, reason: str) -> str:
 
 
 @tool
-def nuclei_scan(
+async def nuclei_scan(
     target: str,
     templates: str = "",
     severity: str = "",
@@ -68,7 +68,7 @@ def nuclei_scan(
         argv.extend(["-t", templates])
     if severity:
         argv.extend(["-severity", severity])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     lines = 0
     if out.exists():
@@ -77,7 +77,7 @@ def nuclei_scan(
 
 
 @tool
-def nikto_scan(target: str, timeout: float = 1800.0) -> str:
+async def nikto_scan(target: str, timeout: float = 1800.0) -> str:
     """Run ``nikto`` for legacy web misconfiguration checks."""
     try:
         assert_not_flag(target, field="target")
@@ -85,13 +85,13 @@ def nikto_scan(target: str, timeout: float = 1800.0) -> str:
         return _flag_error("nikto", str(e))
     out = scratch_file(".json")
     argv = ["nikto", "-host", target, "-Format", "json", "-output", str(out), "-ask", "no"]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target})
 
 
 @tool
-def ffuf_fuzz(
+async def ffuf_fuzz(
     url: str,
     wordlist: str = "/usr/share/wordlists/dirb/common.txt",
     extensions: str = "",
@@ -131,13 +131,13 @@ def ffuf_fuzz(
     ]
     if extensions:
         argv.extend(["-e", extensions])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"url": url})
 
 
 @tool
-def gobuster_dir(
+async def gobuster_dir(
     url: str,
     wordlist: str = "/usr/share/wordlists/dirb/common.txt",
     extensions: str = "",
@@ -168,13 +168,13 @@ def gobuster_dir(
     ]
     if extensions:
         argv.extend(["-x", extensions])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"url": url})
 
 
 @tool
-def dirsearch_scan(
+async def dirsearch_scan(
     url: str,
     wordlist: str = "",
     extensions: str = "php,html,txt,js",
@@ -192,13 +192,13 @@ def dirsearch_scan(
     argv = ["dirsearch", "-u", url, "-e", extensions, "--format", "json", "-o", str(out), "-q"]
     if wordlist:
         argv.extend(["-w", wordlist])
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"url": url})
 
 
 @tool
-def testssl_scan(target: str, timeout: float = 900.0) -> str:
+async def testssl_scan(target: str, timeout: float = 900.0) -> str:
     """Run ``testssl.sh`` against a host:port and write JSON output.
 
     Feed the JSON to ``kg_ingest_testssl`` to surface TLS findings as
@@ -210,32 +210,32 @@ def testssl_scan(target: str, timeout: float = 900.0) -> str:
         return _flag_error("testssl", str(e))
     out = scratch_file(".json")
     argv = ["testssl.sh", "--jsonfile", str(out), "--color", "0", "--quiet", "--", target]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     result.output_path = str(out)
     return format_result(result, extra={"target": target})
 
 
 @tool
-def whatweb_scan(target: str, aggression: int = 3, timeout: float = 180.0) -> str:
+async def whatweb_scan(target: str, aggression: int = 3, timeout: float = 180.0) -> str:
     """Run ``whatweb`` for CMS / framework fingerprinting."""
     try:
         assert_not_flag(target, field="target")
     except FlagInjectionError as e:
         return _flag_error("whatweb", str(e))
     argv = ["whatweb", f"--aggression={aggression}", "--log-json=-", "--", target]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     return format_result(result, extra={"target": target})
 
 
 @tool
-def wafw00f_detect(target: str, timeout: float = 120.0) -> str:
+async def wafw00f_detect(target: str, timeout: float = 120.0) -> str:
     """Run ``wafw00f`` to detect a WAF in front of the target."""
     try:
         assert_not_flag(target, field="target")
     except FlagInjectionError as e:
         return _flag_error("wafw00f", str(e))
     argv = ["wafw00f", "-a", "--", target]
-    result = run_command(argv, timeout=timeout)
+    result = await arun_command(argv, timeout=timeout)
     return format_result(result, extra={"target": target})
 
 

@@ -66,6 +66,32 @@ class TestLocalSubprocessRunner:
         assert result.returncode == 124
         assert any("timeout" in n for n in result.notes)
 
+    @pytest.mark.asyncio
+    async def test_arun_real_command(self) -> None:
+        result = await LocalSubprocessRunner().arun(["true"], timeout=5.0)
+        assert result.ok
+        assert result.returncode == 0
+
+    @pytest.mark.asyncio
+    async def test_arun_missing_binary(self) -> None:
+        result = await LocalSubprocessRunner().arun(
+            ["this-binary-definitely-not-on-path"], timeout=5.0
+        )
+        assert not result.ok
+        assert result.returncode == 127
+
+    @pytest.mark.asyncio
+    async def test_arun_timeout(self) -> None:
+        result = await LocalSubprocessRunner().arun(["sleep", "5"], timeout=0.1)
+        assert not result.ok
+        assert result.returncode == 124
+
+    @pytest.mark.asyncio
+    async def test_arun_captures_stdout(self) -> None:
+        result = await LocalSubprocessRunner().arun(["sh", "-c", "printf hello"], timeout=5.0)
+        assert result.ok
+        assert result.stdout == "hello"
+
 
 class TestDockerSandboxRunner:
     def test_fails_loudly_when_no_sandbox(self) -> None:
@@ -101,6 +127,64 @@ class TestDockerSandboxRunner:
         assert "echo" in stub.last_cmd
         assert "hi there" in stub.last_cmd
         assert result.stdout == "fake-output"
+
+    @pytest.mark.asyncio
+    async def test_arun_uses_async_sandbox_execute(self) -> None:
+        class StubSandbox:
+            def __init__(self) -> None:
+                self.last_cmd = ""
+                self.via_async = False
+
+            async def aexecute(self, cmd: str, timeout: int = 0) -> object:
+                self.last_cmd = cmd
+                self.via_async = True
+
+                class _R:
+                    stdout = "async-output"
+                    stderr = ""
+                    returncode = 0
+
+                return _R()
+
+            def execute(self, cmd: str, timeout: int = 0) -> object:
+                raise AssertionError("sync execute should not be called")
+
+        stub = StubSandbox()
+        set_active_sandbox(stub)
+        result = await DockerSandboxRunner().arun(["echo", "hello"], timeout=5.0)
+        assert result.ok
+        assert stub.via_async
+        assert result.stdout == "async-output"
+
+    @pytest.mark.asyncio
+    async def test_arun_wraps_sync_execute_in_thread(self) -> None:
+        class StubSandbox:
+            def __init__(self) -> None:
+                self.last_cmd = ""
+
+            def execute(self, cmd: str, timeout: int = 0) -> object:
+                self.last_cmd = cmd
+
+                class _R:
+                    stdout = "sync-output"
+                    stderr = ""
+                    returncode = 0
+
+                return _R()
+
+        stub = StubSandbox()
+        set_active_sandbox(stub)
+        result = await DockerSandboxRunner().arun(["echo", "hello"], timeout=5.0)
+        assert result.ok
+        assert result.stdout == "sync-output"
+        assert "echo" in stub.last_cmd
+
+    @pytest.mark.asyncio
+    async def test_arun_no_sandbox_returns_error(self) -> None:
+        set_active_sandbox(None)
+        result = await DockerSandboxRunner().arun(["true"], timeout=5.0)
+        assert not result.ok
+        assert result.returncode == 126
 
     def test_explicit_sandbox_overrides_module_global(self) -> None:
         class StubSandbox:
