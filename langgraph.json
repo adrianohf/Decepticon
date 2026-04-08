@@ -5,7 +5,8 @@
     "recon": "./decepticon/agents/recon.py:graph",
     "soundwave": "./decepticon/agents/soundwave.py:graph",
     "exploit": "./decepticon/agents/exploit.py:graph",
-    "postexploit": "./decepticon/agents/postexploit.py:graph"
+    "postexploit": "./decepticon/agents/postexploit.py:graph",
+    "analyst": "./decepticon/agents/analyst.py:graph"
   },
   "env": ".env",
   "python_version": "3.13"

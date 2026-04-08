@@ -121,9 +121,7 @@ class _Cache:
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(
-                json.dumps(self._data, indent=2), encoding="utf-8"
-            )
+            self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
         except OSError as e:
             log.warning("cve cache save failed: %s", e)
 
@@ -145,9 +143,9 @@ class _Cache:
         }
         if len(self._data) > MAX_CACHE_ENTRIES:
             # Evict oldest by _lru
-            oldest = sorted(
-                self._data.items(), key=lambda kv: kv[1].get("_lru", 0.0)
-            )[: len(self._data) - MAX_CACHE_ENTRIES]
+            oldest = sorted(self._data.items(), key=lambda kv: kv[1].get("_lru", 0.0))[
+                : len(self._data) - MAX_CACHE_ENTRIES
+            ]
             for k, _ in oldest:
                 self._data.pop(k, None)
         self._save()
@@ -172,9 +170,7 @@ async def _fetch_nvd(client: httpx.AsyncClient, cve_id: str) -> dict[str, Any]:
 
 async def _fetch_epss(client: httpx.AsyncClient, cve_id: str) -> dict[str, Any]:
     try:
-        resp = await client.get(
-            EPSS_URL, params={"cve": cve_id}, timeout=DEFAULT_TIMEOUT
-        )
+        resp = await client.get(EPSS_URL, params={"cve": cve_id}, timeout=DEFAULT_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except (httpx.HTTPError, ValueError) as e:
@@ -329,9 +325,7 @@ async def lookup_cves(
 
         async def _one(cve_id: str) -> Exploitability:
             async with semaphore:
-                return await lookup_cve(
-                    cve_id, kev_set=kev_set, client=client, cache=cache
-                )
+                return await lookup_cve(cve_id, kev_set=kev_set, client=client, cache=cache)
 
         results = await asyncio.gather(*(_one(c) for c in cve_ids))
 

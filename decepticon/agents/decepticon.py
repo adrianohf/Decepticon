@@ -84,6 +84,7 @@ def create_decepticon_agent():
     )
 
     # Build sub-agents from existing agent factories
+    from decepticon.agents.analyst import create_analyst_agent
     from decepticon.agents.exploit import create_exploit_agent
     from decepticon.agents.postexploit import create_postexploit_agent
     from decepticon.agents.recon import create_recon_agent
@@ -123,6 +124,24 @@ def create_decepticon_agent():
                 "Saves results to /workspace/exploit/"
             ),
             runnable=StreamingRunnable(create_exploit_agent(), "exploit"),
+        ),
+        CompiledSubAgent(
+            name="analyst",
+            description=(
+                "Vulnerability research agent — the high-value discovery lane. "
+                "Use for: source code review, static analysis (semgrep/bandit/gitleaks), "
+                "dependency CVE sweeps, silent-patch diff hunting, fuzzing, taint "
+                "analysis for SSRF/SQLi/IDOR/deserialization/prototype-pollution/"
+                "command-injection/prompt-injection, and multi-hop exploit chain "
+                "construction. Writes all observations into /workspace/kg.json "
+                "(KnowledgeGraph) so findings survive across iterations. Call "
+                "`plan_attack_chains` on the analyst to see top exploit paths from "
+                "entrypoints to crown jewels, then validate with `validate_finding`. "
+                "Use in parallel with recon/exploit: the analyst works the source "
+                "side while the others work the black-box side, and both feed the "
+                "same knowledge graph."
+            ),
+            runnable=StreamingRunnable(create_analyst_agent(), "analyst"),
         ),
         CompiledSubAgent(
             name="postexploit",

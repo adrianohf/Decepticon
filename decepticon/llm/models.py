@@ -131,6 +131,17 @@ class LLMModelMapping(BaseModel):
         )
     )
 
+    analyst: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            # Source review + chain reasoning benefits from higher-tier
+            # reasoning. Sonnet primary, Opus fallback so the chain
+            # planner gets a smarter model when rate limits hit.
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
     # ── Tactical tier ───────────────────────────────────────────────
     # Tool-heavy, many iterations, speed + cost efficiency matter
 
@@ -195,6 +206,11 @@ class LLMModelMapping(BaseModel):
                     fallback=SONNET,
                     temperature=0.3,
                 ),
+                analyst=ModelAssignment(
+                    primary=OPUS,
+                    fallback=SONNET,
+                    temperature=0.2,
+                ),
                 recon=ModelAssignment(
                     primary=SONNET,
                     fallback=OPUS,
@@ -224,6 +240,10 @@ class LLMModelMapping(BaseModel):
                 exploit=ModelAssignment(
                     primary=HAIKU,
                     temperature=0.3,
+                ),
+                analyst=ModelAssignment(
+                    primary=HAIKU,
+                    temperature=0.2,
                 ),
                 recon=ModelAssignment(
                     primary=HAIKU,

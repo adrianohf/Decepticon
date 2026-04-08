@@ -36,7 +36,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ── Enumerations ────────────────────────────────────────────────────────
 
 
@@ -64,22 +63,22 @@ class NodeKind(StrEnum):
 class EdgeKind(StrEnum):
     """Canonical edge types — describe how nodes relate."""
 
-    RUNS_ON = "runs_on"              # service → host
-    EXPOSES = "exposes"              # host → service/url
-    HAS_VULN = "has_vuln"            # service/url/file → vulnerability
-    DEFINED_IN = "defined_in"        # vuln → code_location
-    LOCATED_AT = "located_at"        # code_location → file/repo
-    AFFECTED_BY = "affected_by"      # service → cve
-    MAPPED_TO = "mapped_to"          # finding → vulnerability/cve
-    AUTH_AS = "auth_as"              # credential → user
-    GRANTS = "grants"                # credential → host/service
-    LEAKS = "leaks"                  # vulnerability → secret/credential
-    ENABLES = "enables"              # vulnerability → vulnerability (pivot)
-    CHAINS_TO = "chains_to"          # finding → finding (ordered step)
-    REACHES = "reaches"              # chain → crown_jewel
-    STARTS_AT = "starts_at"          # chain → entrypoint
-    CONTAINS = "contains"            # chain → finding (unordered member)
-    VALIDATES = "validates"          # poc → finding/vulnerability
+    RUNS_ON = "runs_on"  # service → host
+    EXPOSES = "exposes"  # host → service/url
+    HAS_VULN = "has_vuln"  # service/url/file → vulnerability
+    DEFINED_IN = "defined_in"  # vuln → code_location
+    LOCATED_AT = "located_at"  # code_location → file/repo
+    AFFECTED_BY = "affected_by"  # service → cve
+    MAPPED_TO = "mapped_to"  # finding → vulnerability/cve
+    AUTH_AS = "auth_as"  # credential → user
+    GRANTS = "grants"  # credential → host/service
+    LEAKS = "leaks"  # vulnerability → secret/credential
+    ENABLES = "enables"  # vulnerability → vulnerability (pivot)
+    CHAINS_TO = "chains_to"  # finding → finding (ordered step)
+    REACHES = "reaches"  # chain → crown_jewel
+    STARTS_AT = "starts_at"  # chain → entrypoint
+    CONTAINS = "contains"  # chain → finding (unordered member)
+    VALIDATES = "validates"  # poc → finding/vulnerability
 
 
 class Severity(StrEnum):
@@ -270,9 +269,7 @@ class KnowledgeGraph(BaseModel):
 
     # ── severity helpers ──────────────────────────────────────────────
 
-    def vulnerabilities_by_severity(
-        self, min_severity: Severity = Severity.LOW
-    ) -> list[Node]:
+    def vulnerabilities_by_severity(self, min_severity: Severity = Severity.LOW) -> list[Node]:
         """Return vuln nodes with severity ≥ ``min_severity``, highest first."""
         threshold = SEVERITY_SCORE[min_severity]
         vulns: list[Node] = []
@@ -302,9 +299,7 @@ class KnowledgeGraph(BaseModel):
             count += 1
         return count
 
-    def iter_paths(
-        self, src: str, dst: str, max_depth: int = 6
-    ) -> Iterator[list[str]]:
+    def iter_paths(self, src: str, dst: str, max_depth: int = 6) -> Iterator[list[str]]:
         """Enumerate simple paths from src to dst (bounded depth).
 
         Used by the chain planner for exploration but exposed here so
@@ -351,9 +346,7 @@ def save_graph(graph: KnowledgeGraph, path: Path | str = DEFAULT_PATH) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = graph.model_dump_json(indent=2)
-    fd, tmp = tempfile.mkstemp(
-        prefix=p.name + ".", suffix=".tmp", dir=str(p.parent)
-    )
+    fd, tmp = tempfile.mkstemp(prefix=p.name + ".", suffix=".tmp", dir=str(p.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(payload)
