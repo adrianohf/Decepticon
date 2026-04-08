@@ -94,9 +94,7 @@ def hydrate_all(
     targets = slugs if slugs is not None else INDEXED_SLUGS
     results = [_hydrate_one(slug, root) for slug in targets]
     if rebuild_poc_index:
-        poc_touched = any(
-            r.slug in {TRICKEST_SLUG, MRXN_SLUG} and r.present for r in results
-        )
+        poc_touched = any(r.slug in {TRICKEST_SLUG, MRXN_SLUG} and r.present for r in results)
         if poc_touched:
             try:
                 index = build_index(root=root)

@@ -11,7 +11,6 @@ from decepticon.references.h1_corpus import (
     search,
 )
 
-
 _TOPS_BY_BOUNTY = """# Top reports by bounty
 
 | Title | Program | Bounty | Severity | CWE |

@@ -1907,9 +1907,7 @@ def kg_ingest_dnsx(path: str) -> str:
                 key=f"host::{str(target).lower().rstrip('.')}",
                 source="dnsx-cname",
             )
-            graph.upsert_edge(
-                Edge.make(host.id, target_host.id, EdgeKind.REACHES, weight=0.5)
-            )
+            graph.upsert_edge(Edge.make(host.id, target_host.id, EdgeKind.REACHES, weight=0.5))
 
     _save(graph, out_path)
     return _json({"hosts_added": hosts_added, "stats": graph.stats()})
@@ -1992,7 +1990,9 @@ def kg_ingest_masscan(path: str) -> str:
         # masscan -oJ emits a list with trailing commas sometimes; wrap
         # in brackets if needed
         if raw.startswith("["):
-            entries = json.loads(raw.rstrip(",\n") + ("]" if not raw.rstrip().endswith("]") else ""))
+            entries = json.loads(
+                raw.rstrip(",\n") + ("]" if not raw.rstrip().endswith("]") else "")
+            )
         else:
             entries = [json.loads(line.rstrip(",")) for line in raw.splitlines() if line.strip()]
     except (OSError, json.JSONDecodeError) as e:

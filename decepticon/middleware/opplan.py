@@ -269,8 +269,7 @@ def _format_opplan_for_agent(
                     "in-progress": "[~]",
                 }.get(status, "[ ]")
                 lines.append(
-                    f"{indent}- {marker} {o.get('id', '?')} {o.get('title', '?')} "
-                    f"({status})"
+                    f"{indent}- {marker} {o.get('id', '?')} {o.get('title', '?')} ({status})"
                 )
                 _render(o["id"], depth + 1)
 

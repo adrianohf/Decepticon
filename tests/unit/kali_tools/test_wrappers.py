@@ -8,6 +8,7 @@ the right command lines without ever invoking real binaries.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -47,7 +48,7 @@ class FakeRunner:
 
 
 @pytest.fixture(autouse=True)
-def fake_runner() -> FakeRunner:
+def fake_runner() -> Iterator[FakeRunner]:
     runner = FakeRunner()
     set_runner(runner)
     yield runner

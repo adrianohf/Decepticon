@@ -27,9 +27,7 @@ class TestKgIngestDnsx:
             "\n".join(
                 [
                     json.dumps({"host": "api.example.com", "a": ["10.0.0.1"]}),
-                    json.dumps(
-                        {"host": "web.example.com", "cname": ["edge.cdn.example.net"]}
-                    ),
+                    json.dumps({"host": "web.example.com", "cname": ["edge.cdn.example.net"]}),
                 ]
             ),
             encoding="utf-8",
@@ -51,9 +49,7 @@ class TestKgIngestDnsx:
 
 
 class TestKgIngestKatana:
-    def test_creates_url_entrypoints(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_creates_url_entrypoints(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         kg_path = _configure_kg(monkeypatch, tmp_path)
         out = tmp_path / "katana.jsonl"
         out.write_text(
@@ -84,9 +80,7 @@ class TestKgIngestKatana:
 
 
 class TestKgIngestMasscan:
-    def test_parses_array_format(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_parses_array_format(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         kg_path = _configure_kg(monkeypatch, tmp_path)
         out = tmp_path / "masscan.json"
         out.write_text(
@@ -116,9 +110,7 @@ class TestKgIngestMasscan:
 
 
 class TestKgIngestFfuf:
-    def test_creates_url_nodes(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_creates_url_nodes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         kg_path = _configure_kg(monkeypatch, tmp_path)
         out = tmp_path / "ffuf.json"
         out.write_text(
@@ -148,7 +140,11 @@ class TestKgIngestTestssl:
         out.write_text(
             json.dumps(
                 [
-                    {"id": "heartbleed", "severity": "CRITICAL", "finding": "Heartbleed (CVE-2014-0160) detected"},
+                    {
+                        "id": "heartbleed",
+                        "severity": "CRITICAL",
+                        "finding": "Heartbleed (CVE-2014-0160) detected",
+                    },
                     {"id": "tls1_0", "severity": "HIGH", "finding": "TLS 1.0 enabled"},
                     {"id": "cipher_suites_ok", "severity": "OK", "finding": "Modern ciphers"},
                 ]
@@ -163,9 +159,7 @@ class TestKgIngestTestssl:
 
 
 class TestKgIngestCrackmapexec:
-    def test_parses_success_lines(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_parses_success_lines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         kg_path = _configure_kg(monkeypatch, tmp_path)
         out = tmp_path / "cme.log"
         out.write_text(
@@ -185,9 +179,7 @@ class TestKgIngestCrackmapexec:
 
 
 class TestKgIngestAsrep:
-    def test_parses_krb5asrep_lines(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_parses_krb5asrep_lines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         kg_path = _configure_kg(monkeypatch, tmp_path)
         out = tmp_path / "asrep.txt"
         out.write_text(
@@ -197,9 +189,7 @@ class TestKgIngestAsrep:
             encoding="utf-8",
         )
         payload = json.loads(
-            research_tools.kg_ingest_asrep_hashes.invoke(
-                {"path": str(out), "domain": "CORP"}
-            )
+            research_tools.kg_ingest_asrep_hashes.invoke({"path": str(out), "domain": "CORP"})
         )
         assert payload["asrep_hashes_added"] == 2
         graph = load_graph(kg_path)

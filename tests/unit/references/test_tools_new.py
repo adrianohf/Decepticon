@@ -116,10 +116,7 @@ class TestOnelinerSearchTool:
         repo = tmp_path / "book-of-secret-knowledge"
         repo.mkdir(parents=True)
         (repo / "README.md").write_text(
-            "# Book\n\n"
-            "## tcpdump usage\n\n"
-            "Capture:\n\n"
-            "```\ntcpdump -i eth0 port 53\n```\n",
+            "# Book\n\n## tcpdump usage\n\nCapture:\n\n```\ntcpdump -i eth0 port 53\n```\n",
             encoding="utf-8",
         )
         data = _load(T.oneliner_search.invoke({"topic": "tcpdump"}))
@@ -146,9 +143,7 @@ class TestMethodologyTool:
     def test_populated(self, tmp_path: Path) -> None:
         repo = tmp_path / "all-about-bug-bounty"
         repo.mkdir(parents=True)
-        (repo / "SSRF.md").write_text(
-            "# SSRF\n\nProbe metadata endpoints.\n", encoding="utf-8"
-        )
+        (repo / "SSRF.md").write_text("# SSRF\n\nProbe metadata endpoints.\n", encoding="utf-8")
         data = _load(T.methodology_lookup.invoke({"vuln_class": "ssrf"}))
         assert data["count"] == 1
         assert "metadata" in data["chapters"][0]["excerpt"].lower()

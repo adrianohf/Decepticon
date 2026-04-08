@@ -8,10 +8,10 @@ from typing import Any
 import pytest
 
 from decepticon.core.schemas import (
+    OPPLAN,
     Objective,
     ObjectivePhase,
     ObjectiveStatus,
-    OPPLAN,
 )
 from decepticon.middleware import opplan as opplan_mod
 
@@ -127,9 +127,12 @@ class TestSchemaHierarchy:
         )
         tree = plan.tree()
         assert len(tree) == 1
-        assert tree[0]["id"] == "OBJ-001"
-        assert len(tree[0]["children"]) == 2
-        assert tree[0]["children"][0]["id"] == "OBJ-002"
+        root = tree[0]
+        assert root["id"] == "OBJ-001"
+        children = root["children"]
+        assert isinstance(children, list)
+        assert len(children) == 2
+        assert children[0]["id"] == "OBJ-002"
 
 
 # ── Middleware tools ───────────────────────────────────────────────────
@@ -178,7 +181,7 @@ def _call_tool(tool: Any, args: dict[str, Any], state: dict[str, Any]) -> Any:
     payload = {
         "name": getattr(tool, "name", "tool"),
         "type": "tool_call",
-        "tool_call_id": "test-call-id",
+        "id": "test-call-id",
         "args": {**args, "state": state},
     }
     return tool.invoke(payload)
@@ -256,7 +259,7 @@ class TestObjectiveExpand:
             bag,
             initial_state,
             title="Compromise AD",
-            phase=ObjectivePhase.LATERAL_MOVEMENT,
+            phase=ObjectivePhase.POST_EXPLOIT,
             description="x",
             acceptance_criteria=["c"],
             priority=1,
@@ -288,15 +291,11 @@ class TestObjectiveExpand:
             bag,
             initial_state,
             parent_id="OBJ-999",
-            children=[
-                {"title": "x", "description": "y", "acceptance_criteria": ["z"]}
-            ],
+            children=[{"title": "x", "description": "y", "acceptance_criteria": ["z"]}],
         )
         assert "not found" in _last_message(cmd)
 
-    def test_expand_completed_parent_rejected(
-        self, bag: _ToolBag, initial_state: dict
-    ) -> None:
+    def test_expand_completed_parent_rejected(self, bag: _ToolBag, initial_state: dict) -> None:
         s = _add(
             bag,
             initial_state,
@@ -312,15 +311,11 @@ class TestObjectiveExpand:
             bag,
             s,
             parent_id="OBJ-001",
-            children=[
-                {"title": "x", "description": "y", "acceptance_criteria": ["z"]}
-            ],
+            children=[{"title": "x", "description": "y", "acceptance_criteria": ["z"]}],
         )
         assert "Cannot expand" in _last_message(cmd)
 
-    def test_expand_empty_children_rejected(
-        self, bag: _ToolBag, initial_state: dict
-    ) -> None:
+    def test_expand_empty_children_rejected(self, bag: _ToolBag, initial_state: dict) -> None:
         s = _add(
             bag,
             initial_state,
@@ -351,9 +346,7 @@ class TestParentCompletionGuard:
             bag,
             s,
             parent_id="OBJ-001",
-            children=[
-                {"title": "Child", "description": "y", "acceptance_criteria": ["z"]}
-            ],
+            children=[{"title": "Child", "description": "y", "acceptance_criteria": ["z"]}],
         )
         # Move parent to in-progress
         s = _state_from(
@@ -373,9 +366,7 @@ class TestParentCompletionGuard:
         assert "Cannot complete OBJ-001" in msg
         assert "OBJ-002" in msg
 
-    def test_parent_completes_after_child_done(
-        self, bag: _ToolBag, initial_state: dict
-    ) -> None:
+    def test_parent_completes_after_child_done(self, bag: _ToolBag, initial_state: dict) -> None:
         s = _add(
             bag,
             initial_state,
@@ -389,42 +380,31 @@ class TestParentCompletionGuard:
             bag,
             s,
             parent_id="OBJ-001",
-            children=[
-                {"title": "Child", "description": "y", "acceptance_criteria": ["z"]}
-            ],
+            children=[{"title": "Child", "description": "y", "acceptance_criteria": ["z"]}],
         )
         # Drive both objectives to completed
         for obj_id in ("OBJ-001", "OBJ-002"):
             s = _state_from(
-                bag.update.invoke(
-                    {
-                        "objective_id": obj_id,
-                        "status": "in-progress",
-                        "state": s,
-                        "tool_call_id": "tc",
-                    }
+                _call_tool(
+                    bag.update,
+                    {"objective_id": obj_id, "status": "in-progress"},
+                    s,
                 ),
                 s,
             )
         # Complete child first, then parent.
         s = _state_from(
-            bag.update.invoke(
-                {
-                    "objective_id": "OBJ-002",
-                    "status": "completed",
-                    "state": s,
-                    "tool_call_id": "tc",
-                }
+            _call_tool(
+                bag.update,
+                {"objective_id": "OBJ-002", "status": "completed"},
+                s,
             ),
             s,
         )
-        cmd = bag.update.invoke(
-            {
-                "objective_id": "OBJ-001",
-                "status": "completed",
-                "state": s,
-                "tool_call_id": "tc",
-            }
+        cmd = _call_tool(
+            bag.update,
+            {"objective_id": "OBJ-001", "status": "completed"},
+            s,
         )
         s = _state_from(cmd, s)
         statuses = {o["id"]: o["status"] for o in s["objectives"]}
@@ -433,9 +413,7 @@ class TestParentCompletionGuard:
 
 
 class TestObjectiveCollapse:
-    def test_collapse_cancels_descendants(
-        self, bag: _ToolBag, initial_state: dict
-    ) -> None:
+    def test_collapse_cancels_descendants(self, bag: _ToolBag, initial_state: dict) -> None:
         s = _add(
             bag,
             initial_state,
@@ -454,9 +432,7 @@ class TestObjectiveCollapse:
                 {"title": "B", "description": "x", "acceptance_criteria": ["c"]},
             ],
         )
-        cmd = bag.collapse.invoke(
-            {"parent_id": "OBJ-001", "state": s, "tool_call_id": "tc"}
-        )
+        cmd = _call_tool(bag.collapse, {"parent_id": "OBJ-001"}, s)
         s = _state_from(cmd, s)
         statuses = {o["id"]: o["status"] for o in s["objectives"]}
         assert statuses["OBJ-002"] == "cancelled"
@@ -465,9 +441,7 @@ class TestObjectiveCollapse:
         assert statuses["OBJ-001"] == "pending"
 
     def test_collapse_unknown_parent(self, bag: _ToolBag, initial_state: dict) -> None:
-        cmd = bag.collapse.invoke(
-            {"parent_id": "OBJ-999", "state": initial_state, "tool_call_id": "tc"}
-        )
+        cmd = _call_tool(bag.collapse, {"parent_id": "OBJ-999"}, initial_state)
         assert "not found" in _last_message(cmd)
 
 
@@ -488,11 +462,9 @@ class TestListWithTree:
             bag,
             s,
             parent_id="OBJ-001",
-            children=[
-                {"title": "Pivot", "description": "x", "acceptance_criteria": ["c"]}
-            ],
+            children=[{"title": "Pivot", "description": "x", "acceptance_criteria": ["c"]}],
         )
-        cmd = bag.list.invoke({"state": s, "tool_call_id": "tc"})
+        cmd = _call_tool(bag.list, {}, s)
         msg = _last_message(cmd)
         assert "Task Tree" in msg
         assert "OBJ-001" in msg

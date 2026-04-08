@@ -39,17 +39,13 @@ def patched_ensure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]
 
 
 class TestHydrateAll:
-    def test_covers_all_indexed_slugs(
-        self, patched_ensure: list[str], tmp_path: Path
-    ) -> None:
+    def test_covers_all_indexed_slugs(self, patched_ensure: list[str], tmp_path: Path) -> None:
         results = hydrate.hydrate_all(root=tmp_path, rebuild_poc_index=False)
         assert {r.slug for r in results} == set(hydrate.INDEXED_SLUGS)
         assert all(r.ok for r in results)
         assert patched_ensure == list(hydrate.INDEXED_SLUGS)
 
-    def test_format_report_non_empty(
-        self, patched_ensure: list[str], tmp_path: Path
-    ) -> None:
+    def test_format_report_non_empty(self, patched_ensure: list[str], tmp_path: Path) -> None:
         results = hydrate.hydrate_all(root=tmp_path, rebuild_poc_index=False)
         report = hydrate.format_report(results)
         assert "hackerone-reports" in report

@@ -13,7 +13,6 @@ from decepticon.kali_tools._common import (
     format_result,
     get_runner,
     run_command,
-    scratch_file,
     set_active_sandbox,
     set_runner,
 )

@@ -19,11 +19,7 @@ def _build_fake_cache(root: Path) -> Path:
     sqli = repo / "SQL Injection" / "Intruder"
     sqli.mkdir(parents=True)
     (sqli / "mysql.txt").write_text(
-        "# header comment\n"
-        "' OR 1=1-- -\n"
-        "' UNION SELECT null,null-- -\n"
-        "\n"
-        "' AND SLEEP(5)-- -\n",
+        "# header comment\n' OR 1=1-- -\n' UNION SELECT null,null-- -\n\n' AND SLEEP(5)-- -\n",
         encoding="utf-8",
     )
     (repo / "SQL Injection" / "README.md").write_text("# SQLi methodology\n", encoding="utf-8")
@@ -31,9 +27,7 @@ def _build_fake_cache(root: Path) -> Path:
     ssrf = repo / "Server Side Request Forgery" / "Intruder"
     ssrf.mkdir(parents=True)
     (ssrf / "bypass.txt").write_text(
-        "http://127.0.0.1/\n"
-        "http://localhost/admin\n"
-        "http://0.0.0.0/\n",
+        "http://127.0.0.1/\nhttp://localhost/admin\nhttp://0.0.0.0/\n",
         encoding="utf-8",
     )
 
