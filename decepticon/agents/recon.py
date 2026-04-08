@@ -32,6 +32,9 @@ from decepticon.core.config import load_config
 from decepticon.llm import LLMFactory
 from decepticon.middleware import SafeCommandMiddleware
 from decepticon.middleware.skills import DecepticonSkillsMiddleware
+from decepticon.kali_tools import KALI_TOOLS
+from decepticon.kali_tools._common import set_active_sandbox, set_runner
+from decepticon.kali_tools._common import DockerSandboxRunner
 from decepticon.research.tools import RESEARCH_TOOLS
 from decepticon.tools.bash import bash
 from decepticon.tools.bash.bash import set_sandbox
@@ -56,11 +59,13 @@ def create_recon_agent():
     llm = factory.get_model("recon")
     fallback_models = factory.get_fallback_models("recon")
 
-    # Build DockerSandbox and inject into bash tool
+    # Build DockerSandbox and inject into bash tool + Kali tools
     sandbox = DockerSandbox(
         container_name=config.docker.sandbox_container_name,
     )
     set_sandbox(sandbox)
+    set_active_sandbox(sandbox)
+    set_runner(DockerSandboxRunner())
 
     system_prompt = load_prompt("recon", shared=["bash"])
 
@@ -87,7 +92,7 @@ def create_recon_agent():
         ]
     )
 
-    tools = [*RESEARCH_TOOLS, bash]
+    tools = [*RESEARCH_TOOLS, *KALI_TOOLS, bash]
 
     agent = create_agent(
         llm,

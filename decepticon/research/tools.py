@@ -1859,6 +1859,414 @@ async def validate_finding(
     return _json(result.to_dict())
 
 
+# ── Tier 2 ingesters (Kali tool output → knowledge graph) ─────────────
+
+
+@tool
+def kg_ingest_dnsx(path: str) -> str:
+    """Ingest dnsx JSONL output (one resolution record per line).
+
+    Creates host nodes for each resolved name and adds a short note on
+    the record type (A / AAAA / CNAME) when present.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    hosts_added = 0
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        host_value = str(row.get("host") or row.get("name") or "").strip().lower().rstrip(".")
+        if not host_value:
+            continue
+        a = row.get("a") or []
+        aaaa = row.get("aaaa") or []
+        cname = row.get("cname") or []
+        host = _ensure_host_node(
+            graph,
+            label=host_value,
+            key=f"host::{host_value}",
+            source="dnsx",
+            a_records=a if isinstance(a, list) else [],
+            aaaa_records=aaaa if isinstance(aaaa, list) else [],
+            cname_records=cname if isinstance(cname, list) else [],
+        )
+        hosts_added += 1
+        # Link CNAME targets as separate host nodes
+        for target in cname if isinstance(cname, list) else []:
+            target_host = _ensure_host_node(
+                graph,
+                label=str(target).lower().rstrip("."),
+                key=f"host::{str(target).lower().rstrip('.')}",
+                source="dnsx-cname",
+            )
+            graph.upsert_edge(
+                Edge.make(host.id, target_host.id, EdgeKind.REACHES, weight=0.5)
+            )
+
+    _save(graph, out_path)
+    return _json({"hosts_added": hosts_added, "stats": graph.stats()})
+
+
+@tool
+def kg_ingest_katana(path: str) -> str:
+    """Ingest katana JSONL crawl output as URL / entrypoint nodes."""
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    urls_added = 0
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        endpoint = (
+            row.get("endpoint") or row.get("request", {}).get("endpoint") or row.get("url") or ""
+        )
+        if not endpoint:
+            continue
+        parsed_url = urlparse(endpoint)
+        host_value = (parsed_url.hostname or "").lower()
+        if not host_value:
+            continue
+        host = _ensure_host_node(
+            graph,
+            label=host_value,
+            key=f"host::{host_value}",
+            source="katana",
+        )
+        url_node = graph.upsert_node(
+            Node.make(
+                NodeKind.URL,
+                endpoint,
+                key=f"url::{endpoint}",
+                source="katana",
+                method=row.get("method") or row.get("request", {}).get("method") or "GET",
+            )
+        )
+        ep = graph.upsert_node(
+            Node.make(
+                NodeKind.ENTRYPOINT,
+                endpoint,
+                key=f"entrypoint::{endpoint}",
+                source="katana",
+                host=host_value,
+            )
+        )
+        graph.upsert_edge(Edge.make(host.id, url_node.id, EdgeKind.EXPOSES, weight=0.5))
+        graph.upsert_edge(Edge.make(url_node.id, ep.id, EdgeKind.EXPOSES, weight=0.4))
+        urls_added += 1
+
+    _save(graph, out_path)
+    return _json({"urls_added": urls_added, "stats": graph.stats()})
+
+
+@tool
+def kg_ingest_masscan(path: str) -> str:
+    """Ingest masscan JSON output into host + service nodes.
+
+    Masscan writes a JSON array where each entry has ``ip`` and
+    ``ports: [{port, proto, status}]``. State is usually ``open``.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    try:
+        raw = p.read_text(encoding="utf-8").strip()
+        if not raw:
+            return _json({"error": "masscan output empty"})
+        # masscan -oJ emits a list with trailing commas sometimes; wrap
+        # in brackets if needed
+        if raw.startswith("["):
+            entries = json.loads(raw.rstrip(",\n") + ("]" if not raw.rstrip().endswith("]") else ""))
+        else:
+            entries = [json.loads(line.rstrip(",")) for line in raw.splitlines() if line.strip()]
+    except (OSError, json.JSONDecodeError) as e:
+        return _json({"error": f"failed to parse masscan json: {e}"})
+
+    hosts_added = 0
+    services_added = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ip = str(entry.get("ip") or "").strip()
+        if not ip:
+            continue
+        host = _ensure_host_node(graph, label=ip, key=f"host::{ip}", ip=ip, source="masscan")
+        hosts_added += 1
+        for port_row in entry.get("ports") or []:
+            try:
+                port = int(port_row.get("port", 0))
+            except (TypeError, ValueError):
+                continue
+            if not port:
+                continue
+            proto = port_row.get("proto", "tcp")
+            if port_row.get("status") and port_row.get("status") != "open":
+                continue
+            _ensure_service_node(
+                graph,
+                host=host,
+                host_label=ip,
+                port=port,
+                proto=proto,
+                source="masscan",
+                service="unknown",
+                product="",
+                version="",
+            )
+            services_added += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "hosts_added": hosts_added,
+            "services_added": services_added,
+            "stats": graph.stats(),
+        }
+    )
+
+
+@tool
+def kg_ingest_ffuf(path: str) -> str:
+    """Ingest ffuf JSON output as URL nodes anchored to a host.
+
+    Each hit becomes an ENTRYPOINT/URL pair with the matched status
+    code recorded as a property.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return _json({"error": f"failed to parse ffuf json: {e}"})
+
+    results = data.get("results") or []
+    urls_added = 0
+    for row in results:
+        url = row.get("url") or ""
+        if not url:
+            continue
+        status = int(row.get("status") or 0)
+        length = int(row.get("length") or 0)
+        parsed_url = urlparse(url)
+        host_value = (parsed_url.hostname or "").lower()
+        if host_value:
+            host = _ensure_host_node(
+                graph, label=host_value, key=f"host::{host_value}", source="ffuf"
+            )
+        else:
+            host = None
+        url_node = graph.upsert_node(
+            Node.make(
+                NodeKind.URL,
+                url,
+                key=f"url::{url}",
+                source="ffuf",
+                status=status,
+                length=length,
+            )
+        )
+        if host is not None:
+            graph.upsert_edge(Edge.make(host.id, url_node.id, EdgeKind.EXPOSES, weight=0.5))
+        urls_added += 1
+
+    _save(graph, out_path)
+    return _json({"urls_added": urls_added, "stats": graph.stats()})
+
+
+@tool
+def kg_ingest_testssl(path: str) -> str:
+    """Ingest testssl.sh JSON output as TLS vulnerability nodes.
+
+    testssl.sh emits an array of findings with ``id``, ``severity``,
+    ``finding`` fields. We map the severity labels onto the graph's
+    ``Severity`` enum and create a VULNERABILITY node per HIGH/CRIT
+    finding.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return _json({"error": f"failed to parse testssl json: {e}"})
+
+    rows: list[dict[str, Any]] = []
+    if isinstance(data, list):
+        rows = [r for r in data if isinstance(r, dict)]
+    elif isinstance(data, dict):
+        # Newer testssl wraps everything in {"scanResult": [...]}
+        scan_result = data.get("scanResult")
+        if isinstance(scan_result, list):
+            for entry in scan_result:
+                if not isinstance(entry, dict):
+                    continue
+                section = entry.get("vulnerabilities") or entry.get("serverDefaults") or []
+                if isinstance(section, list):
+                    rows.extend(r for r in section if isinstance(r, dict))
+
+    severity_map = {
+        "CRITICAL": Severity.CRITICAL,
+        "HIGH": Severity.HIGH,
+        "MEDIUM": Severity.MEDIUM,
+        "LOW": Severity.LOW,
+        "WARN": Severity.LOW,
+        "INFO": Severity.INFO,
+        "OK": Severity.INFO,
+    }
+    vulns_added = 0
+    for row in rows:
+        sev_raw = str(row.get("severity") or "INFO").upper()
+        severity = severity_map.get(sev_raw, Severity.INFO)
+        if severity in {Severity.INFO, Severity.LOW}:
+            continue
+        rule_id = str(row.get("id") or "testssl.finding")
+        finding = str(row.get("finding") or "").strip()
+        key = f"testssl::{rule_id}::{finding[:48]}"
+        vuln = graph.upsert_node(
+            Node.make(
+                NodeKind.VULNERABILITY,
+                f"[testssl:{rule_id}] {finding[:80]}",
+                key=key,
+                scanner="testssl",
+                rule_id=rule_id,
+                severity=severity.value,
+                description=finding,
+            )
+        )
+        vulns_added += 1
+        del vuln  # Not linked to a host node — testssl.sh output does
+        # not always carry the target identity, and the agent has
+        # context about which host it scanned.
+
+    _save(graph, out_path)
+    return _json({"vulns_added": vulns_added, "stats": graph.stats()})
+
+
+@tool
+def kg_ingest_crackmapexec(path: str, protocol: str = "smb", target: str = "") -> str:
+    """Ingest a crackmapexec / netexec log file as credential leads.
+
+    CME log format is loose, so we use line regexes to find ``[+]``
+    success rows carrying ``DOMAIN\\user:pass`` or NTLM hashes, then
+    create ``CREDENTIAL`` nodes + optional ``USER`` nodes in the graph.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    text = p.read_text(encoding="utf-8", errors="replace")
+    success_re = re.compile(r"\[\+\].*?([A-Za-z0-9._-]+)[\\/]([A-Za-z0-9._-]+):(\S+)")
+    admin_re = re.compile(r"\(Pwn3d!?\)")
+
+    creds_added = 0
+    admins_added = 0
+    for line in text.splitlines():
+        if "[+]" not in line:
+            continue
+        m = success_re.search(line)
+        if not m:
+            continue
+        domain, user, secret = m.group(1), m.group(2), m.group(3)
+        is_admin = bool(admin_re.search(line))
+        cred = graph.upsert_node(
+            Node.make(
+                NodeKind.CREDENTIAL,
+                f"{domain}\\{user}",
+                key=f"cred::{domain}\\{user}",
+                source="crackmapexec",
+                protocol=protocol,
+                target=target,
+                secret_type=("ntlm" if ":" in secret and len(secret) >= 32 else "password"),
+                admin=is_admin,
+            )
+        )
+        user_node = graph.upsert_node(
+            Node.make(
+                NodeKind.USER,
+                f"{domain}\\{user}",
+                key=f"user::{domain}\\{user}",
+                source="crackmapexec",
+                domain=domain,
+            )
+        )
+        graph.upsert_edge(Edge.make(cred.id, user_node.id, EdgeKind.AUTH_AS, weight=0.5))
+        creds_added += 1
+        if is_admin:
+            admins_added += 1
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "creds_added": creds_added,
+            "admin_creds_added": admins_added,
+            "stats": graph.stats(),
+        }
+    )
+
+
+@tool
+def kg_ingest_asrep_hashes(path: str, domain: str = "") -> str:
+    """Ingest an ``impacket-GetNPUsers`` output file as credential leads.
+
+    AS-REP hashes look like ``$krb5asrep$23$user@DOMAIN:...``. Each
+    line creates a CREDENTIAL node tagged for hashcat mode 18200.
+    """
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    added = 0
+    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("$krb5asrep$"):
+            continue
+        after_dollars = line.split("$", 4)
+        if len(after_dollars) < 5:
+            continue
+        user_part = after_dollars[4].split(":")[0]
+        user = user_part.split("@")[0]
+        dom = user_part.split("@")[1] if "@" in user_part else domain
+        label = f"{dom}\\{user}" if dom else user
+        graph.upsert_node(
+            Node.make(
+                NodeKind.CREDENTIAL,
+                label,
+                key=f"cred-asrep::{label}",
+                source="impacket-GetNPUsers",
+                secret_type="krb5asrep",
+                hashcat_mode=18200,
+                hash=line,
+            )
+        )
+        added += 1
+
+    _save(graph, out_path)
+    return _json({"asrep_hashes_added": added, "stats": graph.stats()})
+
+
 # ── Public tool list ────────────────────────────────────────────────────
 
 RESEARCH_TOOLS = [
@@ -1871,6 +2279,13 @@ RESEARCH_TOOLS = [
     kg_ingest_nuclei_jsonl,
     kg_ingest_subfinder,
     kg_ingest_httpx_jsonl,
+    kg_ingest_dnsx,
+    kg_ingest_katana,
+    kg_ingest_masscan,
+    kg_ingest_ffuf,
+    kg_ingest_testssl,
+    kg_ingest_crackmapexec,
+    kg_ingest_asrep_hashes,
     kg_ingest_sarif,
     kg_analyze_jwt,
     kg_analyze_oauth_callback,

@@ -16,6 +16,12 @@ from decepticon.agents.prompts import load_prompt
 from decepticon.backends import DockerSandbox
 from decepticon.cloud.tools import CLOUD_TOOLS
 from decepticon.core.config import load_config
+from decepticon.kali_tools import KALI_TOOLS
+from decepticon.kali_tools._common import (
+    DockerSandboxRunner,
+    set_active_sandbox,
+    set_runner,
+)
 from decepticon.llm import LLMFactory
 from decepticon.middleware import SafeCommandMiddleware
 from decepticon.middleware.skills import DecepticonSkillsMiddleware
@@ -35,6 +41,8 @@ def create_cloud_hunter_agent():
 
     sandbox = DockerSandbox(container_name=config.docker.sandbox_container_name)
     set_sandbox(sandbox)
+    set_active_sandbox(sandbox)
+    set_runner(DockerSandboxRunner())
 
     system_prompt = load_prompt("cloud_hunter", shared=["bash"])
     backend = CompositeBackend(
@@ -57,7 +65,7 @@ def create_cloud_hunter_agent():
         ]
     )
 
-    tools = [*CLOUD_TOOLS, *RESEARCH_TOOLS, *REFERENCES_TOOLS, bash]
+    tools = [*CLOUD_TOOLS, *RESEARCH_TOOLS, *REFERENCES_TOOLS, *KALI_TOOLS, bash]
     agent = create_agent(
         llm,
         system_prompt=system_prompt,
