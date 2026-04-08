@@ -58,6 +58,8 @@ class NodeKind(StrEnum):
     CROWN_JEWEL = "crown_jewel"
     CHAIN = "chain"
     HYPOTHESIS = "hypothesis"
+    CANDIDATE = "candidate"  # scanner-emitted suspect code location
+    PATCH = "patch"  # proposed/applied fix for a verified finding
 
 
 class EdgeKind(StrEnum):
@@ -79,6 +81,8 @@ class EdgeKind(StrEnum):
     STARTS_AT = "starts_at"  # chain → entrypoint
     CONTAINS = "contains"  # chain → finding (unordered member)
     VALIDATES = "validates"  # poc → finding/vulnerability
+    DERIVED_FROM = "derived_from"  # vulnerability → candidate
+    PATCHES = "patches"  # patch → vulnerability/finding
 
 
 class Severity(StrEnum):

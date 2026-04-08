@@ -193,6 +193,57 @@ class LLMModelMapping(BaseModel):
         )
     )
 
+    # ── Vulnresearch pipeline tier ─────────────────────────────────
+    # Five specialist sub-agents with scale-tuned model assignments.
+
+    vulnresearch: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=GPT_5,
+            temperature=0.4,
+        )
+    )
+
+    scanner: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=HAIKU,
+            fallback=GEMINI_FLASH,
+            temperature=0.2,
+        )
+    )
+
+    detector: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=GPT_4,
+            temperature=0.2,
+        )
+    )
+
+    verifier: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=GPT_4,
+            temperature=0.2,
+        )
+    )
+
+    patcher: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=SONNET,
+            temperature=0.2,
+        )
+    )
+
+    exploiter: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=SONNET,
+            temperature=0.2,
+        )
+    )
+
     def get_assignment(self, role: str) -> ModelAssignment:
         """Get model assignment for a role.
 
@@ -268,6 +319,12 @@ class LLMModelMapping(BaseModel):
                 ad_operator=ModelAssignment(primary=HAIKU, temperature=0.2),
                 recon=ModelAssignment(primary=HAIKU, temperature=0.3),
                 postexploit=ModelAssignment(primary=HAIKU, temperature=0.3),
+                vulnresearch=ModelAssignment(primary=HAIKU, temperature=0.4),
+                scanner=ModelAssignment(primary=HAIKU, temperature=0.2),
+                detector=ModelAssignment(primary=HAIKU, temperature=0.2),
+                verifier=ModelAssignment(primary=HAIKU, temperature=0.2),
+                patcher=ModelAssignment(primary=HAIKU, temperature=0.2),
+                exploiter=ModelAssignment(primary=HAIKU, temperature=0.2),
             )
 
         raise ValueError(f"Unknown profile: {profile}")

@@ -10,7 +10,13 @@
     "reverser": "./decepticon/agents/reverser.py:graph",
     "contract_auditor": "./decepticon/agents/contract_auditor.py:graph",
     "cloud_hunter": "./decepticon/agents/cloud_hunter.py:graph",
-    "ad_operator": "./decepticon/agents/ad_operator.py:graph"
+    "ad_operator": "./decepticon/agents/ad_operator.py:graph",
+    "vulnresearch": "./decepticon/agents/vulnresearch.py:graph",
+    "scanner": "./decepticon/agents/scanner.py:graph",
+    "detector": "./decepticon/agents/detector.py:graph",
+    "verifier": "./decepticon/agents/verifier.py:graph",
+    "patcher": "./decepticon/agents/patcher.py:graph",
+    "exploiter": "./decepticon/agents/exploiter.py:graph"
   },
   "env": ".env",
   "python_version": "3.13"
