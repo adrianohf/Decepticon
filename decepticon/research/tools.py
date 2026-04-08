@@ -962,6 +962,138 @@ def kg_ingest_subfinder(path: str, root_domain: str = "") -> str:
     )
 
 
+@tool
+def kg_ingest_httpx_jsonl(path: str, scanner_hint: str = "httpx") -> str:
+    """Ingest httpx JSONL output into host/service/entrypoint graph nodes."""
+    graph, out_path = _load()
+    p = Path(path)
+    if not p.exists():
+        return _json({"error": f"file not found: {path}"})
+
+    parsed = 0
+    skipped = 0
+    entrypoints = 0
+    service_links = 0
+
+    for raw_line in p.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+
+        url = str(row.get("url") or row.get("input") or "").strip()
+        if not url:
+            skipped += 1
+            continue
+        parsed += 1
+
+        parsed_url = urlparse(url)
+        host_value = (
+            str(row.get("host") or parsed_url.hostname or row.get("input") or "").strip().lower()
+        )
+        if not host_value:
+            skipped += 1
+            continue
+
+        port = row.get("port") or parsed_url.port
+        try:
+            port_int = int(port) if port is not None else (443 if parsed_url.scheme == "https" else 80)
+        except (TypeError, ValueError):
+            port_int = 443 if parsed_url.scheme == "https" else 80
+
+        scheme = parsed_url.scheme or ("https" if port_int in {443, 8443} else "http")
+        status_code = row.get("status-code")
+        title = row.get("title")
+        webserver = row.get("webserver")
+        technologies = row.get("tech") if isinstance(row.get("tech"), list) else []
+
+        host = _ensure_host_node(
+            graph,
+            label=host_value,
+            key=f"host::{host_value}",
+            source=scanner_hint,
+        )
+
+        service = _ensure_service_node(
+            graph,
+            host=host,
+            host_label=host_value,
+            port=port_int,
+            proto="tcp",
+            source=scanner_hint,
+            service="http",
+            scheme=scheme,
+            status_code=status_code,
+            webserver=webserver,
+            technologies=technologies,
+        )
+
+        ep = graph.upsert_node(
+            Node.make(
+                NodeKind.ENTRYPOINT,
+                url,
+                key=f"entrypoint::{url}",
+                source=scanner_hint,
+                host=host_value,
+                scheme=scheme,
+                port=port_int,
+                status_code=status_code,
+                title=title,
+                webserver=webserver,
+                technologies=technologies,
+            )
+        )
+        url_node = graph.upsert_node(
+            Node.make(
+                NodeKind.URL,
+                url,
+                key=f"url::{url}",
+                source=scanner_hint,
+                status_code=status_code,
+                title=title,
+                webserver=webserver,
+                technologies=technologies,
+            )
+        )
+        graph.upsert_edge(Edge.make(host.id, ep.id, EdgeKind.EXPOSES, weight=0.5))
+        graph.upsert_edge(Edge.make(ep.id, host.id, EdgeKind.RUNS_ON, weight=0.5))
+        graph.upsert_edge(Edge.make(service.id, ep.id, EdgeKind.EXPOSES, weight=0.4))
+        graph.upsert_edge(Edge.make(ep.id, service.id, EdgeKind.RUNS_ON, weight=0.4))
+        graph.upsert_edge(Edge.make(ep.id, url_node.id, EdgeKind.EXPOSES, weight=0.3))
+        graph.upsert_edge(Edge.make(url_node.id, ep.id, EdgeKind.RUNS_ON, weight=0.3))
+        entrypoints += 1
+        service_links += 1
+
+        if isinstance(status_code, int) and status_code >= 500:
+            vuln = graph.upsert_node(
+                Node.make(
+                    NodeKind.VULNERABILITY,
+                    f"[{scanner_hint}] unstable endpoint {url}",
+                    key=f"{scanner_hint}::http-5xx::{url}",
+                    scanner=scanner_hint,
+                    rule_id="http-5xx",
+                    severity=Severity.LOW.value,
+                    status_code=status_code,
+                )
+            )
+            graph.upsert_edge(Edge.make(ep.id, vuln.id, EdgeKind.HAS_VULN, weight=0.7))
+
+    _save(graph, out_path)
+    return _json(
+        {
+            "parsed": parsed,
+            "skipped": skipped,
+            "entrypoints": entrypoints,
+            "service_links": service_links,
+            "stats": graph.stats(),
+        }
+    )
+
+
 # ── Web/Auth signal ingestion ──────────────────────────────────────────
 
 
@@ -1727,6 +1859,7 @@ RESEARCH_TOOLS = [
     kg_ingest_nmap_xml,
     kg_ingest_nuclei_jsonl,
     kg_ingest_subfinder,
+    kg_ingest_httpx_jsonl,
     kg_ingest_sarif,
     kg_analyze_jwt,
     kg_analyze_oauth_callback,

@@ -12,9 +12,8 @@ read in 90 seconds. Focuses on:
 from __future__ import annotations
 
 from collections import Counter
-from typing import Iterable
 
-from decepticon.research.graph import KnowledgeGraph, NodeKind, Severity
+from decepticon.research.graph import KnowledgeGraph, NodeKind
 
 
 def _count_by_severity(graph: KnowledgeGraph) -> dict[str, int]:

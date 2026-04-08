@@ -16,7 +16,6 @@ from typing import Iterable
 
 from decepticon.research.graph import KnowledgeGraph, NodeKind
 
-
 _HEADER: tuple[str, ...] = (
     "title",
     "severity",

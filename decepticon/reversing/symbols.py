@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # API categories
 _DANGEROUS_C = {
     "strcpy", "strcat", "sprintf", "vsprintf", "gets", "scanf", "memcpy",

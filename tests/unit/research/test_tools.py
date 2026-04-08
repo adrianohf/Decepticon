@@ -87,6 +87,52 @@ class TestReconIngestion:
         assert len(graph.by_kind(NodeKind.VULNERABILITY)) == 1
         assert len(graph.by_kind(NodeKind.CVE)) == 1
 
+    def test_kg_ingest_httpx_jsonl_creates_entrypoints(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kg_path = _configure_kg(monkeypatch, tmp_path)
+        httpx_path = tmp_path / "httpx.jsonl"
+        httpx_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "url": "https://api.example.com/admin",
+                            "host": "api.example.com",
+                            "port": 443,
+                            "status-code": 200,
+                            "title": "Admin Console",
+                            "webserver": "nginx",
+                            "tech": ["nginx", "next.js"],
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "url": "https://api.example.com/error",
+                            "host": "api.example.com",
+                            "port": 443,
+                            "status-code": 503,
+                        }
+                    ),
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        payload = json.loads(
+            research_tools.kg_ingest_httpx_jsonl.invoke({"path": str(httpx_path)})
+        )
+        assert payload["parsed"] == 2
+        assert payload["entrypoints"] == 2
+        assert payload["service_links"] == 2
+
+        graph = load_graph(kg_path)
+        assert len(graph.by_kind(NodeKind.ENTRYPOINT)) >= 2
+        # 5xx rows become low-severity availability findings for follow-up.
+        assert any(
+            v.props.get("rule_id") == "http-5xx" for v in graph.by_kind(NodeKind.VULNERABILITY)
+        )
+
 
 class TestChainObjectiveDrafting:
     def test_suggest_objectives_from_chains_returns_objective(
@@ -223,7 +269,7 @@ contract Vault {
         _configure_kg(monkeypatch, tmp_path)
         binary = tmp_path / "agent.bin"
         binary.write_bytes(
-            b"MZ" + b"A" * 64 + b"http://c2.example.net/callback\x00"
+            b"MZ" + b"A" * 64 + b"\x00http://c2.example.net/callback\x00"
             + b"system strcpy connect\x00"
             + b"AKIAABCDEFGHIJKLMNOP\x00"
         )

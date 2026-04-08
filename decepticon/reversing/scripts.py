@@ -8,7 +8,6 @@ and function boundaries rather than trying to be full-project analyses.
 
 from __future__ import annotations
 
-
 _GHIDRA_RECON = '''# Ghidra headless recon script — dumps symbols, xrefs, strings, calls
 # Usage:
 #   analyzeHeadless /tmp/ghidra_proj proj -import {binary} -postScript {script_name}

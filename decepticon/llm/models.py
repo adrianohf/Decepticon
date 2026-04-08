@@ -142,6 +142,38 @@ class LLMModelMapping(BaseModel):
         )
     )
 
+    reverser: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
+    contract_auditor: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=SONNET,
+            temperature=0.2,
+        )
+    )
+
+    cloud_hunter: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
+    ad_operator: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
     # ── Tactical tier ───────────────────────────────────────────────
     # Tool-heavy, many iterations, speed + cost efficiency matter
 
@@ -225,34 +257,17 @@ class LLMModelMapping(BaseModel):
 
         if profile == ModelProfile.TEST:
             return cls(
-                decepticon=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.4,
-                ),
-                planning=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.4,
-                ),
-                soundwave=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.4,
-                ),
-                exploit=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.3,
-                ),
-                analyst=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.2,
-                ),
-                recon=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.3,
-                ),
-                postexploit=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.3,
-                ),
+                decepticon=ModelAssignment(primary=HAIKU, temperature=0.4),
+                planning=ModelAssignment(primary=HAIKU, temperature=0.4),
+                soundwave=ModelAssignment(primary=HAIKU, temperature=0.4),
+                exploit=ModelAssignment(primary=HAIKU, temperature=0.3),
+                analyst=ModelAssignment(primary=HAIKU, temperature=0.2),
+                reverser=ModelAssignment(primary=HAIKU, temperature=0.2),
+                contract_auditor=ModelAssignment(primary=HAIKU, temperature=0.2),
+                cloud_hunter=ModelAssignment(primary=HAIKU, temperature=0.2),
+                ad_operator=ModelAssignment(primary=HAIKU, temperature=0.2),
+                recon=ModelAssignment(primary=HAIKU, temperature=0.3),
+                postexploit=ModelAssignment(primary=HAIKU, temperature=0.3),
             )
 
         raise ValueError(f"Unknown profile: {profile}")
