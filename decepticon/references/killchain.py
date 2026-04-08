@@ -223,7 +223,7 @@ def _parse_readme(repo: Path) -> list[ToolEntry]:
         phase = "misc"
         for heading_text in reversed(heading_stack):
             candidate = normalize_phase(heading_text)
-            if candidate != heading_text.lower().replace(" ", "-"):
+            if candidate in _CANONICAL_PHASES and candidate != "misc":
                 phase = candidate
                 break
         # Description = the text after the link in the same line.
