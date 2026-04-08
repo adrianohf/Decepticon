@@ -32,11 +32,33 @@ class LLMConfig(BaseModel):
 
 
 class DockerConfig(BaseModel):
-    """Docker sandbox configuration."""
+    """Docker sandbox configuration.
+
+    Runtime tuning knobs for the tmux-backed bash tool can be overridden via
+    nested env vars, e.g. ``DECEPTICON_DOCKER__POLL_INTERVAL=0.25``.
+    """
 
     sandbox_container_name: str = "decepticon-sandbox"
     sandbox_image: str = "decepticon-sandbox:latest"
     network: str = "decepticon-net"
+
+    # ── tmux session behavior ──
+    poll_interval: float = Field(0.5, gt=0.0, description="Seconds between capture-pane polls")
+    stall_seconds: float = Field(
+        3.0, gt=0.0, description="Seconds of no screen change → treat as interactive prompt"
+    )
+    max_output_chars: int = Field(
+        30_000, gt=0, description="Truncate command output larger than this"
+    )
+    auto_background_seconds: float = Field(
+        60.0, gt=0.0, description="Auto-background a blocking command after this many seconds"
+    )
+    size_watchdog_chars: int = Field(
+        5_000_000, gt=0, description="Force-kill commands producing more than this many chars"
+    )
+    size_watchdog_interval: float = Field(
+        5.0, gt=0.0, description="Seconds between size watchdog checks"
+    )
 
 
 class DecepticonConfig(BaseSettings):

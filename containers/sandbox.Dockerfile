@@ -2,52 +2,45 @@
 # To update: docker pull kalilinux/kali-rolling:latest && docker inspect --format='{{index .RepoDigests 0}}' kalilinux/kali-rolling:latest
 FROM kalilinux/kali-rolling@sha256:a3849f99f9f187122de4822341c49e55d250a771f2dbc5cfd56a146017e0e6ae
 
-# Fix SSL certificate issues with Kali mirrors, then install packages
-# Disable apt sandbox so it doesn't fail to drop privileges/chown to _apt user
+# Consolidated package install — one RUN layer to maximize cache hits
+# and minimize image size. Kali apt sandbox disabled so it doesn't fail
+# trying to drop privileges to the _apt user.
 RUN echo "APT::Sandbox::User \"root\";" > /etc/apt/apt.conf.d/10sandbox && \
     apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends --no-install-suggests \
+        ca-certificates && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-    nmap \
-    dnsutils \
-    whois \
-    curl \
-    wget \
-    netcat-openbsd \
-    iputils-ping \
-    python3 \
-    python3-pip \
-    tmux \
-    && apt-get clean
-
-# Install subfinder (often not in default kali repos or needs specific setup, but lets try to get it via apt if possible, otherwise we skip or use go)
-# Actually, subfinder is in Kali repos: `apt install subfinder`
-RUN apt-get update && apt-get install -y --no-install-recommends subfinder && apt-get clean
-
-# Exploit & post-exploitation tools
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    hydra \
-    sqlmap \
-    nikto \
-    smbclient \
-    exploitdb \
-    dirb \
-    gobuster \
-    && apt-get clean
-
-# C2 client — Sliver client connects to the separate C2 server container.
-# The full `sliver` package includes both server and client binaries;
-# only the client (`sliver-client`) is used from the sandbox.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends sliver && \
-    apt-get clean
+    apt-get install -y --no-install-recommends --no-install-suggests \
+        # ── Core runtime ──
+        curl \
+        wget \
+        python3 \
+        python3-pip \
+        tmux \
+        # ── Recon ──
+        nmap \
+        dnsutils \
+        whois \
+        netcat-openbsd \
+        iputils-ping \
+        subfinder \
+        # ── Exploit & post-exploitation ──
+        hydra \
+        sqlmap \
+        nikto \
+        smbclient \
+        exploitdb \
+        dirb \
+        gobuster \
+        # ── C2 client (Sliver client connects to the separate C2 server container) ──
+        sliver && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Configure tmux: 50K line scrollback buffer to prevent output truncation
 RUN echo "set-option -g history-limit 50000" > /root/.tmux.conf
 
-# Working directory for the agent's virtual filesystem
+# Working directory for the agent's virtual filesystem.
 # Runs as root — security boundary is the container, not the user.
 # Root access is required for raw sockets (nmap SYN scans), packet capture,
 # and unrestricted filesystem access during red team operations.
@@ -58,6 +51,10 @@ WORKDIR /workspace
 COPY containers/sandbox-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
+
+# Healthcheck: verify the sandbox is alive and tmux is usable.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD tmux -V >/dev/null 2>&1 || exit 1
 
 # Keep the container alive so the backend can 'docker exec' into it
 CMD ["tail", "-f", "/dev/null"]
