@@ -34,6 +34,7 @@ from decepticon.kali_tools._common import DockerSandboxRunner, set_active_sandbo
 from decepticon.llm import LLMFactory
 from decepticon.middleware import SafeCommandMiddleware
 from decepticon.middleware.skills import DecepticonSkillsMiddleware
+from decepticon.references.tools import REFERENCES_TOOLS
 from decepticon.research.tools import RESEARCH_TOOLS
 from decepticon.tools.bash import bash
 from decepticon.tools.bash.bash import set_sandbox
@@ -91,7 +92,7 @@ def create_recon_agent():
         ]
     )
 
-    tools = [*RESEARCH_TOOLS, *KALI_TOOLS, bash]
+    tools = [*RESEARCH_TOOLS, *REFERENCES_TOOLS, *KALI_TOOLS, bash]
 
     agent = create_agent(
         llm,

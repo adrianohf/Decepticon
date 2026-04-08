@@ -45,6 +45,7 @@ NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 OSV_URL = "https://api.osv.dev/v1/query"
 EPSS_URL = "https://api.first.org/data/v1/epss"
 
+
 def _default_cache_path() -> Path:
     """Resolve the CVE JSON cache location.
 

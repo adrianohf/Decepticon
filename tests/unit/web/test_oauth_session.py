@@ -93,7 +93,9 @@ class TestCookie:
         assert "SameSite" in joined
 
     def test_hex_characters_are_counted(self) -> None:
-        a = analyze_cookie("session", "deadBEEF1234", secure=True, http_only=True, same_site="Strict")
+        a = analyze_cookie(
+            "session", "deadBEEF1234", secure=True, http_only=True, same_site="Strict"
+        )
         assert a.char_classes["hex"] == len("deadBEEF1234")
         assert a.char_classes["lower"] == 4
         assert a.char_classes["upper"] == 4

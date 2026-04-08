@@ -39,6 +39,7 @@ import json
 import os
 import shlex
 import subprocess
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -173,7 +174,9 @@ class DockerSandboxRunner:
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> CommandResult:
-        sandbox = self._explicit_sandbox if self._explicit_sandbox is not None else get_active_sandbox()
+        sandbox = (
+            self._explicit_sandbox if self._explicit_sandbox is not None else get_active_sandbox()
+        )
         if sandbox is None:
             return CommandResult(
                 command=list(argv),
@@ -228,7 +231,6 @@ class DockerSandboxRunner:
 # asyncio task it runs in — sees the same value. Tests that need
 # isolation explicitly call ``set_runner(LocalSubprocessRunner())`` in
 # their teardown.
-import threading
 
 _runner_lock = threading.RLock()
 _active_sandbox_obj: Any = None
