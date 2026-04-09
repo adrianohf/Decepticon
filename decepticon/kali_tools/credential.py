@@ -98,10 +98,13 @@ async def crackmapexec_run(
             assert_not_flag(username, field="username")
         if module:
             assert_not_flag(module, field="module")
-        # password/ntlm_hash/command MAY legitimately contain tricky
-        # characters but must not begin with a flag marker
+        # password/ntlm_hash/command must not begin with a flag marker
+        if password:
+            assert_not_flag(password, field="password")
         if ntlm_hash:
             assert_not_flag(ntlm_hash, field="ntlm_hash")
+        if command:
+            assert_not_flag(command, field="command")
     except FlagInjectionError as e:
         return _flag_error("crackmapexec", str(e))
     binary = "crackmapexec"

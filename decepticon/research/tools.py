@@ -19,7 +19,7 @@ import asyncio
 import hashlib
 import json
 import re
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse

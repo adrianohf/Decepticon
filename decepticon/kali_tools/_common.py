@@ -39,6 +39,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import shlex
 import threading
 import time
@@ -227,11 +228,17 @@ def _no_sandbox_result(argv: list[str]) -> CommandResult:
     )
 
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _sandbox_cmdline(argv: list[str], cwd: str | None, env: dict[str, str] | None) -> str:
     cmd = " ".join(shlex.quote(c) for c in argv)
     if cwd:
         cmd = f"cd {shlex.quote(cwd)} && {cmd}"
     if env:
+        for k in env:
+            if not _ENV_KEY_RE.match(k):
+                raise ValueError(f"invalid env key: {k!r}")
         prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
         cmd = f"{prefix} {cmd}"
     return cmd
