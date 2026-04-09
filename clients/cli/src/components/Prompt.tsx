@@ -4,6 +4,7 @@ import { TextInput } from "@inkjs/ui";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { useSpinnerFrame } from "../hooks/useSpinnerFrame.js";
 import { getCommands } from "../commands/registry.js";
+import { AGENT_LABELS, AGENT_MODES } from "../utils/agents.js";
 
 interface PromptProps {
   isDisabled: boolean;
@@ -11,18 +12,6 @@ interface PromptProps {
   /** Currently active agent name, e.g. "recon". null when idle. */
   activeAgent?: string | null;
 }
-
-/** All agents in execution order. */
-const AGENTS = ["decepticon", "soundwave", "recon", "exploit", "postexploit"];
-
-/** Display labels for the agent bar. */
-const AGENT_LABELS: Record<string, string> = {
-  decepticon: "Decepticon",
-  soundwave: "Soundwave",
-  recon: "Recon",
-  exploit: "Exploit",
-  postexploit: "PostExploit",
-};
 
 const DEBOUNCE_MS = 150;
 
@@ -38,10 +27,10 @@ const AgentBar = React.memo(function AgentBar({
 
   return (
     <Box flexDirection="row">
-      {AGENTS.map((agent, i) => {
+      {AGENT_MODES.map((agent, i) => {
         const label = AGENT_LABELS[agent] ?? agent;
         const isActive = agent === activeAgent;
-        const separator = i < AGENTS.length - 1 ? " | " : "";
+        const separator = i < AGENT_MODES.length - 1 ? " | " : "";
 
         return (
           <Text key={agent}>
@@ -186,7 +175,7 @@ export const Prompt = React.memo(function Prompt({
 
       {/* Keybinding hints */}
       <Text dimColor>
-        {"  ctrl+o: expand  ctrl+c: cancel/exit"}
+        {"  ctrl+o: expand  ctrl+g: graph mode  ctrl+b: sidebar  ctrl+c: cancel/exit"}
       </Text>
     </Box>
   );

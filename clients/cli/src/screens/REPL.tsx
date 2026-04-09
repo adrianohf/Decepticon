@@ -18,6 +18,8 @@ import { useAgent } from "../hooks/useAgent.js";
 import { useOpplan } from "../hooks/useOpplan.js";
 import { useSubAgentSessions } from "../hooks/useSubAgentSessions.js";
 import { useGlobalKeybindings } from "../hooks/useGlobalKeybindings.js";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
+import { useGraphCanvasServer } from "../hooks/useGraphCanvasServer.js";
 import { useAppState } from "../state/AppState.js";
 import { Banner } from "../components/Banner.js";
 import { EventItem } from "../components/EventItem.js";
@@ -30,6 +32,7 @@ import { ScreenProvider } from "../components/shell/ScreenContext.js";
 import { ExpandOutputProvider } from "../components/shell/ExpandOutputContext.js";
 import { SubAgentProvider } from "../components/shell/SubAgentContext.js";
 import { CtrlOToExpand } from "../components/shell/CtrlOToExpand.js";
+import { GraphSidebar } from "../components/GraphSidebar.js";
 import { parseSlashCommand, findCommand } from "../commands/registry.js";
 import { groupConsecutiveTools } from "../utils/groupEvents.js";
 import { formatDuration } from "../utils/format.js";
@@ -39,6 +42,7 @@ import type { CommandContext } from "../commands/types.js";
 import type { AgentEvent, ScreenMode, SubAgentSession } from "../types.js";
 import { ErrorMessage } from "../components/messages/ErrorMessage.js";
 import type { ToolGroup } from "../utils/groupEvents.js";
+import { deriveGraphSnapshot } from "../utils/graph.js";
 
 export type Screen = ScreenMode;
 
@@ -58,6 +62,12 @@ export function REPL({ initialMessage }: REPLProps) {
   const opplan = useOpplan(agent.events);
   const sessions = useSubAgentSessions(agent.events);
   const screen = useAppState((s) => s.screen);
+  const sidebarVisible = useAppState((s) => s.sidebarVisible);
+  const graphSidebarMode = useAppState((s) => s.graphSidebarMode);
+  const { columns } = useTerminalSize();
+  const graphSnapshot = useMemo(() => deriveGraphSnapshot(agent.events), [agent.events]);
+  const canvas = useGraphCanvasServer(graphSnapshot);
+  const showSidebar = sidebarVisible && columns >= 120;
 
   // Auto-submit initial message (e.g. demo mode)
   const autoStarted = useRef(false);
@@ -174,10 +184,24 @@ export function REPL({ initialMessage }: REPLProps) {
   if (screen === "transcript") {
     return (
       <ScreenProvider value="transcript">
-        <TranscriptView
-          events={agent.events}
-          sessions={sessions}
-        />
+        <Box flexDirection="row">
+          <Box flexDirection="column" flexGrow={1}>
+            <TranscriptView
+              events={agent.events}
+              sessions={sessions}
+            />
+          </Box>
+          {showSidebar && (
+            <GraphSidebar
+              snapshot={graphSnapshot}
+              activeAgent={agent.activeAgent}
+              mode={graphSidebarMode}
+              canvasUrl={canvas.url}
+              canvasStatus={canvas.status}
+              canvasError={canvas.error}
+            />
+          )}
+        </Box>
       </ScreenProvider>
     );
   }
@@ -185,64 +209,77 @@ export function REPL({ initialMessage }: REPLProps) {
   // ── PROMPT MODE ─────────────────────────────────────────────────
   return (
     <ScreenProvider value="prompt">
-    <Box flexDirection="column">
-      {/* Static region: banner + completed events + completed sessions */}
-      <Static items={staticItems}>
-        {(item) => (
-          <Box key={item.id}>
-            {item.kind === "banner" ? (
-              <Banner />
-            ) : item.kind === "session" ? (
-              <AgentSessionGroup
-                session={completedSessions[item.sessionIdx]!}
-                events={agent.events}
-                screen="prompt"
-                isLast={true}
-              />
-            ) : item.kind === "group" ? (
-              <ToolGroupSummary group={item.group} />
-            ) : (
-              <ExpandOutputProvider value={item.event.id === lastBashEventId}>
-                <EventItem event={item.event} />
-              </ExpandOutputProvider>
+      <Box flexDirection="row">
+        <Box flexDirection="column" flexGrow={1}>
+          {/* Static region: banner + completed events + completed sessions */}
+          <Static items={staticItems}>
+            {(item) => (
+              <Box key={item.id}>
+                {item.kind === "banner" ? (
+                  <Banner />
+                ) : item.kind === "session" ? (
+                  <AgentSessionGroup
+                    session={completedSessions[item.sessionIdx]!}
+                    events={agent.events}
+                    screen="prompt"
+                    isLast={true}
+                  />
+                ) : item.kind === "group" ? (
+                  <ToolGroupSummary group={item.group} />
+                ) : (
+                  <ExpandOutputProvider value={item.event.id === lastBashEventId}>
+                    <EventItem event={item.event} />
+                  </ExpandOutputProvider>
+                )}
+              </Box>
             )}
-          </Box>
-        )}
-      </Static>
+          </Static>
 
-      {/* Dynamic region: coordinator panel (running + recently completed agents) */}
-      {sessions.length > 0 && (
-        <Box marginTop={1}>
-          <CoordinatorPanel
-            sessions={sessions}
-            events={agent.events}
+          {/* Dynamic region: coordinator panel (running + recently completed agents) */}
+          {sessions.length > 0 && (
+            <Box marginTop={1}>
+              <CoordinatorPanel
+                sessions={sessions}
+                events={agent.events}
+              />
+            </Box>
+          )}
+
+          <ActivityIndicator
+            isStreaming={agent.isStreaming}
+            streamStats={agent.streamStats}
+          />
+
+          {/* Persistent OPPLAN display */}
+          {opplan && opplan.objectives.length > 0 && (
+            <OpplanStatus opplan={opplan} />
+          )}
+
+          {agent.error && <ErrorMessage content={agent.error} />}
+
+          {/* Transcript mode hint */}
+          {!agent.isStreaming && agent.events.length > 0 && (
+            <CtrlOToExpand />
+          )}
+
+          <Prompt
+            isDisabled={agent.isStreaming}
+            onSubmit={handleSubmit}
+            activeAgent={agent.activeAgent}
           />
         </Box>
-      )}
 
-      <ActivityIndicator
-        isStreaming={agent.isStreaming}
-        streamStats={agent.streamStats}
-      />
-
-      {/* Persistent OPPLAN display */}
-      {opplan && opplan.objectives.length > 0 && (
-        <OpplanStatus opplan={opplan} />
-      )}
-
-      {agent.error && <ErrorMessage content={agent.error} />}
-
-      {/* Transcript mode hint */}
-      {!agent.isStreaming && agent.events.length > 0 && (
-        <CtrlOToExpand />
-      )}
-
-      <Prompt
-        isDisabled={agent.isStreaming}
-        onSubmit={handleSubmit}
-        activeAgent={agent.activeAgent}
-      />
-    </Box>
+        {showSidebar && (
+          <GraphSidebar
+            snapshot={graphSnapshot}
+            activeAgent={agent.activeAgent}
+            mode={graphSidebarMode}
+            canvasUrl={canvas.url}
+            canvasStatus={canvas.status}
+            canvasError={canvas.error}
+          />
+        )}
+      </Box>
     </ScreenProvider>
   );
 }

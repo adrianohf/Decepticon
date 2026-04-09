@@ -81,6 +81,7 @@ demo.tape
 # Decepticon runtime data
 .decepticon/
 workspace/
+.bg-shell/
 
 .langgraph_api/
 .omc/
