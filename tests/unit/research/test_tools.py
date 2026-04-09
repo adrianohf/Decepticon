@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from decepticon.research import _state as state
 from decepticon.research import tools as research_tools
 from decepticon.research.cve import Exploitability
 from decepticon.research.graph import Edge, EdgeKind, Node, NodeKind, load_graph, save_graph
@@ -343,3 +344,30 @@ contract Vault {
         graph = load_graph(kg_path)
         vulns = graph.by_kind(NodeKind.VULNERABILITY)
         assert any(v.props.get("scanner") == "cookie-analysis" for v in vulns)
+
+
+class TestGraphBackendHealth:
+    def test_kg_backend_health_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _configure_kg(monkeypatch, tmp_path)
+        monkeypatch.setenv("DECEPTICON_KG_BACKEND", "json")
+        state._invalidate_kg_cache()
+
+        payload = json.loads(research_tools.kg_backend_health.invoke({}))
+        assert payload["backend"] == "json"
+        assert payload["ok"] is True
+        assert payload["stats"]["nodes"] == 0
+
+    def test_kg_backend_health_neo4j_reports_error_without_credentials(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure_kg(monkeypatch, tmp_path)
+        monkeypatch.setenv("DECEPTICON_KG_BACKEND", "neo4j")
+        monkeypatch.delenv("DECEPTICON_NEO4J_URI", raising=False)
+        monkeypatch.delenv("DECEPTICON_NEO4J_USER", raising=False)
+        monkeypatch.delenv("DECEPTICON_NEO4J_PASSWORD", raising=False)
+        state._invalidate_kg_cache()
+
+        payload = json.loads(research_tools.kg_backend_health.invoke({}))
+        assert payload["backend"] == "neo4j"
+        assert payload["ok"] is False
+        assert "missing environment variables" in payload["error"].lower()

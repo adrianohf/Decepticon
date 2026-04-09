@@ -46,6 +46,8 @@ dependencies = [
     "deepagents>=0.4.4",
     # Security
     "defusedxml>=0.7.0",
+    # Graph memory (Neo4j attack-chain graph)
+    "neo4j>=5.0",
 ]
 
 [dependency-groups]
@@ -59,6 +61,7 @@ dev = [
 
 [project.scripts]
 decepticon = "decepticon.__main__:main"
+decepticon-kg-health = "decepticon.research.health:main"
 
 [project.urls]
 Homepage = "https://github.com/PurpleAILAB/Decepticon"

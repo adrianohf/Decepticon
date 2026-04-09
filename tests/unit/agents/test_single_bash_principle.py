@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+import decepticon.kali_tools as kali_tools
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 OPERATIONAL_AGENT_FILES = [
@@ -36,3 +38,8 @@ def test_operational_agents_include_bash_in_tool_surface(path: Path) -> None:
     assert match is not None, f"tools list not found in {path}"
     tools_expr = match.group(1)
     assert "bash" in tools_expr, f"bash missing from tools list in {path}"
+
+
+def test_kali_tools_not_in_public_exports() -> None:
+    assert "KALI_TOOLS" not in kali_tools.__all__
+    assert "LEGACY_KALI_TOOLS" in kali_tools.__all__

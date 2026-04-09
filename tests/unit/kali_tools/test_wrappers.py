@@ -15,10 +15,11 @@ from typing import Any
 
 import pytest
 
+import decepticon.kali_tools as kali_pkg
 from decepticon.kali_tools import (
     CREDENTIAL_TOOLS,
     EXPLOIT_TOOLS,
-    KALI_TOOLS,
+    LEGACY_KALI_TOOLS,
     NETWORK_TOOLS,
     RECON_TOOLS,
     WEB_SCAN_TOOLS,
@@ -84,9 +85,14 @@ def _invoke(tool: Any, **kwargs: Any) -> dict[str, Any]:
 
 
 class TestPackageContents:
-    def test_kali_tools_count(self) -> None:
-        assert len(KALI_TOOLS) >= 20
-        assert all(hasattr(t, "invoke") for t in KALI_TOOLS)
+    def test_legacy_kali_tools_count(self) -> None:
+        assert len(LEGACY_KALI_TOOLS) >= 20
+        assert all(hasattr(t, "invoke") for t in LEGACY_KALI_TOOLS)
+
+    def test_kali_tools_alias_emits_deprecation_warning(self) -> None:
+        with pytest.warns(DeprecationWarning):
+            tools = kali_pkg.KALI_TOOLS
+        assert len(tools) == len(LEGACY_KALI_TOOLS)
 
     def test_groups_disjoint(self) -> None:
         all_groups = [

@@ -10,7 +10,7 @@
 COMPOSE := docker compose
 COMPOSE_CLI := $(COMPOSE) --profile cli
 
-.PHONY: dev start cli stop status logs build test test-cli lint lint-cli quality clean
+.PHONY: dev start cli stop status logs kg-health neo4j-health build test test-cli lint lint-cli quality clean
 
 # ── Development ──────────────────────────────────────────────────
 
@@ -35,6 +35,14 @@ stop:
 ## Show service status
 status:
 	$(COMPOSE) ps
+
+## Knowledge-graph backend health from the running LangGraph container
+kg-health:
+	$(COMPOSE) exec langgraph python -m decepticon.research.health
+
+## Direct Neo4j startup check (cypher-shell RETURN 1)
+neo4j-health:
+	$(COMPOSE) exec neo4j cypher-shell -u neo4j -p "$${NEO4J_PASSWORD:-decepticon-graph}" "RETURN 1 AS ok;"
 
 ## Follow service logs (usage: make logs or make logs SVC=langgraph)
 logs:
@@ -124,8 +132,10 @@ help:
 	@echo "Production-like:"
 	@echo "  make start      Build + start in background"
 	@echo "  make stop       Stop all services"
-	@echo "  make status     Show service status"
-	@echo "  make logs       Follow logs (SVC=langgraph)"
+	@echo "  make status       Show service status"
+	@echo "  make kg-health    Graph backend health (from langgraph container)"
+	@echo "  make neo4j-health Direct Neo4j startup check (cypher-shell)"
+	@echo "  make logs         Follow logs (SVC=langgraph)"
 	@echo ""
 	@echo "Quality (Python):"
 	@echo "  make test        Run pytest in container"

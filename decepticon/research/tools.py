@@ -41,6 +41,7 @@ from decepticon.research.graph import (
     NodeKind,
     Severity,
 )
+from decepticon.research.health import backend_health
 from decepticon.research.patch import PATCH_TOOLS
 from decepticon.research.sarif import ingest_sarif_file
 from decepticon.research.scanner_tools import SCANNER_TOOLS
@@ -483,6 +484,16 @@ def kg_stats() -> str:
     graph state at iteration start. Returns JSON stats dict."""
     graph, path = _load()
     return _json({"path": str(path), "backend": _kg_backend_name(), **graph.stats()})
+
+
+@tool
+def kg_backend_health() -> str:
+    """Report KnowledgeGraph backend health/startup diagnostics.
+
+    Use at session start (or when graph writes fail) to verify whether the
+    configured backend is reachable and returning graph stats.
+    """
+    return _json(backend_health())
 
 
 # ── CVE intelligence ────────────────────────────────────────────────────
@@ -2353,6 +2364,7 @@ RESEARCH_TOOLS = [
     kg_query,
     kg_neighbors,
     kg_stats,
+    kg_backend_health,
     kg_ingest_nmap_xml,
     kg_ingest_nuclei_jsonl,
     kg_ingest_subfinder,

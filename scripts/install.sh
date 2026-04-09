@@ -319,6 +319,14 @@ case "${1:-}" in
         $COMPOSE ps
         ;;
 
+    kg-health|graph-health)
+        if ! docker ps --filter "name=decepticon-langgraph" --format '{{.Names}}' | grep -q .; then
+            echo -e "${YELLOW}LangGraph is not running. Start Decepticon first: ${BOLD}decepticon${NC}"
+            exit 1
+        fi
+        $COMPOSE exec -T langgraph python -m decepticon.research.health
+        ;;
+
     logs)
         $COMPOSE logs -f "${2:-langgraph}"
         ;;
@@ -491,6 +499,7 @@ case "${1:-}" in
         echo "  decepticon stop         Stop all services"
         echo "  decepticon update [-f]  Update images and config files (--force to re-pull)"
         echo "  decepticon status       Show service status"
+        echo "  decepticon kg-health    Graph backend health diagnostics"
         echo "  decepticon logs [svc]   Follow service logs (default: langgraph)"
         echo "  decepticon config       Edit configuration (.env)"
         echo "  decepticon demo         Run guided demo (Metasploitable 2)"

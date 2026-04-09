@@ -9,6 +9,7 @@
 | `decepticon stop` | Stop all services |
 | `decepticon update [-f]` | Pull latest images and sync configuration (`--force` to re-pull same version) |
 | `decepticon status` | Show service status |
+| `decepticon kg-health` | Knowledge-graph backend health diagnostics (json/neo4j) |
 | `decepticon logs [service]` | Follow service logs (default: langgraph) |
 | `decepticon config` | Edit API keys and settings |
 | `decepticon victims` | Start vulnerable test targets (DVWA, Metasploitable) |

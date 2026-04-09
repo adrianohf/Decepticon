@@ -27,13 +27,15 @@ drop down to ``bash`` for edge cases.
 
 from __future__ import annotations
 
+import warnings
+
 from decepticon.kali_tools.credential import CREDENTIAL_TOOLS
 from decepticon.kali_tools.exploit import EXPLOIT_TOOLS
 from decepticon.kali_tools.network import NETWORK_TOOLS
 from decepticon.kali_tools.recon import RECON_TOOLS
 from decepticon.kali_tools.web_scan import WEB_SCAN_TOOLS
 
-KALI_TOOLS = [
+LEGACY_KALI_TOOLS = [
     *RECON_TOOLS,
     *NETWORK_TOOLS,
     *WEB_SCAN_TOOLS,
@@ -41,10 +43,29 @@ KALI_TOOLS = [
     *CREDENTIAL_TOOLS,
 ]
 
+
+def __getattr__(name: str):
+    """Compatibility shim for legacy imports.
+
+    ``KALI_TOOLS`` is intentionally deprecated from package exports to
+    reinforce the single-bash execution philosophy in runtime agents.
+    """
+    if name == "KALI_TOOLS":
+        warnings.warn(
+            "decepticon.kali_tools.KALI_TOOLS is deprecated. "
+            "Operational agents must execute via the single `bash` tool. "
+            "Use LEGACY_KALI_TOOLS only for migration/tests.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return LEGACY_KALI_TOOLS
+    raise AttributeError(name)
+
+
 __all__ = [
     "CREDENTIAL_TOOLS",
     "EXPLOIT_TOOLS",
-    "KALI_TOOLS",
+    "LEGACY_KALI_TOOLS",
     "NETWORK_TOOLS",
     "RECON_TOOLS",
     "WEB_SCAN_TOOLS",
