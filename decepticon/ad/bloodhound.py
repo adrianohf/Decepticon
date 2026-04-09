@@ -197,14 +197,34 @@ def merge_bloodhound_json(
     Users, Computers, Groups, Domains, GPOs, OUs.
     """
     if isinstance(data, str):
-        data = json.loads(data)
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"bloodhound: invalid JSON payload: {exc}") from exc
+    # BloodHound's schema is always a top-level object — a top-level
+    # array or scalar would crash the .get() calls below. Reject cleanly.
+    if not isinstance(data, dict):
+        raise ValueError(
+            "bloodhound: expected a JSON object at the top level, got "
+            f"{type(data).__name__}"
+        )
     stats = ImportStats()
 
-    meta = data.get("meta") or {}
+    meta_raw = data.get("meta")
+    meta = meta_raw if isinstance(meta_raw, dict) else {}
     object_type = type_hint or meta.get("type") or "Users"
     type_singular = object_type.rstrip("s")
 
-    items = data.get("data") or data.get("items") or []
+    items_raw = data.get("data") if "data" in data else data.get("items")
+    if items_raw is None:
+        items: list[Any] = []
+    elif isinstance(items_raw, list):
+        items = items_raw
+    else:
+        raise ValueError(
+            "bloodhound: 'data'/'items' must be an array, got "
+            f"{type(items_raw).__name__}"
+        )
     counter_attr = object_type.lower()
 
     for obj in items:

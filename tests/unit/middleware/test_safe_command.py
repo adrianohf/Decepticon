@@ -83,17 +83,42 @@ class TestSafeCommandMiddlewareSync:
         [
             "ls -la",
             "nmap -sV 10.0.0.1",
-            "echo 'pkill bash will not actually run because echo'",  # in quotes, regex still matches — test the OPPOSITE below
+            # Quoted-string false-positives — these are the exact cases
+            # the old regex denylist blocked. The new shell-aware
+            # tokenizer correctly sees 'echo' as the head of argv.
+            "echo 'pkill bash will not actually run because echo'",
+            'echo "pkill tmux in a report"',
+            "grep -r 'docker compose' /workspace/target",
+            "printf '%s\\n' 'iptables -L is a literal string here'",
+            # pkill with a non-dangerous target is fine
+            "pkill -f my-long-running-script",
+            # docker is allowed as a bare word in e.g. path fragments
+            "ls /workspace/docker-configs",
         ],
     )
     def test_allows_benign_commands(self, command: str) -> None:
-        # Skip the literal-string-with-pkill case for the inverse test
-        if "pkill bash" in command:
-            pytest.skip("regex matches inside quotes — known limitation")
         request = _make_request("bash", command=command)
         result = self.mw.wrap_tool_call(request, self.handler)
-        assert result == "ok"
+        assert result == "ok", f"should have allowed: {command!r}"
         self.handler.assert_called_once_with(request)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # Chained-command cases: if ANY statement is dangerous we
+            # block, even if a benign statement precedes it.
+            "ls -la; pkill bash",
+            "echo hi && docker exec sandbox ls",
+            "true || killall tmux",
+            "nmap -sV t | pkill tmux",
+        ],
+    )
+    def test_blocks_dangerous_in_chained_commands(self, command: str) -> None:
+        request = _make_request("bash", command=command)
+        result = self.mw.wrap_tool_call(request, self.handler)
+        assert isinstance(result, ToolMessage)
+        assert result.status == "error"
+        self.handler.assert_not_called()
 
     def test_allows_non_bash_tool(self) -> None:
         request = _make_request("ls", path="/workspace")

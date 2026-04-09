@@ -30,6 +30,53 @@ class TestBloodHoundIngest:
         assert stats.users == 1
         assert stats.edges >= 1
 
+    def test_rejects_top_level_array(self) -> None:
+        import pytest
+
+        g = KnowledgeGraph()
+        with pytest.raises(ValueError, match="top level"):
+            merge_bloodhound_json("[]", g)
+
+    def test_rejects_top_level_scalar(self) -> None:
+        import pytest
+
+        g = KnowledgeGraph()
+        with pytest.raises(ValueError, match="top level"):
+            merge_bloodhound_json("42", g)
+
+    def test_rejects_invalid_json(self) -> None:
+        import pytest
+
+        g = KnowledgeGraph()
+        with pytest.raises(ValueError, match="invalid JSON"):
+            merge_bloodhound_json("{not json", g)
+
+    def test_rejects_non_array_data_field(self) -> None:
+        import pytest
+
+        g = KnowledgeGraph()
+        with pytest.raises(ValueError, match="'data'/'items' must be an array"):
+            merge_bloodhound_json(
+                {"meta": {"type": "users"}, "data": "oops"}, g
+            )
+
+    def test_missing_meta_is_tolerated(self) -> None:
+        # Historical behavior: meta is optional. Verify it still works
+        # and doesn't crash on the new shape-check path.
+        g = KnowledgeGraph()
+        stats = merge_bloodhound_json(
+            {
+                "data": [
+                    {
+                        "ObjectIdentifier": "S-1-5-21-1-1-1-500",
+                        "Properties": {"name": "admin@corp.local"},
+                    }
+                ]
+            },
+            g,
+        )
+        assert stats.users == 1
+
     def test_dcsync_detection(self) -> None:
         bh = {
             "meta": {"type": "users"},
