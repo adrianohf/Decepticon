@@ -100,7 +100,9 @@ _PE_MACHINE = {
 
 
 def _detect_format(header: bytes) -> str:
-    for magic, name in _MAGICS.items():
+    # Check longer prefixes first to avoid collisions (e.g. java-class
+    # 7-byte magic vs macho-fat 4-byte magic share the same prefix).
+    for magic, name in sorted(_MAGICS.items(), key=lambda x: len(x[0]), reverse=True):
         if header.startswith(magic):
             return name
     return "unknown"
@@ -193,13 +195,13 @@ def identify_binary(path: str | Path, *, max_read: int = 4096) -> BinaryInfo:
     p = Path(path)
     info = BinaryInfo(path=str(p), format="unknown", size=0)
     try:
-        data = p.read_bytes()
+        info.size = p.stat().st_size
+        with p.open("rb") as f:
+            data = f.read(max_read)
     except OSError as e:
         info.notes.append(f"read error: {e}")
         return info
-    info.size = len(data)
-    header = data[:max_read]
-    fmt = _detect_format(header)
+    fmt = _detect_format(data)
     info.format = fmt
     if fmt == "elf":
         _parse_elf(data, info)
@@ -207,6 +209,6 @@ def identify_binary(path: str | Path, *, max_read: int = 4096) -> BinaryInfo:
         _parse_pe(data, info)
     elif fmt.startswith("macho"):
         info.bitness = 64 if "64" in fmt else 32
-        info.endianness = "little" if "fa\xed" in fmt or "ce" in fmt else "big"
+        info.endianness = "big" if "big" in fmt else "little"
         info.architecture = "unknown (parse deferred to radare2)"
     return info

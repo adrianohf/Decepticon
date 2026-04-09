@@ -112,23 +112,25 @@ def _upsert_bh_object(graph: KnowledgeGraph, obj: dict[str, Any], type_name: str
     return node
 
 
+def _build_bh_index(graph: KnowledgeGraph) -> dict[str, Node]:
+    """Build a bh_id → Node lookup for O(1) principal resolution."""
+    return {n.props.get("bh_id"): n for n in graph.nodes.values() if n.props.get("bh_id")}
+
+
 def _ingest_aces(
     graph: KnowledgeGraph,
     src: Node,
     obj: dict[str, Any],
     stats: ImportStats,
+    bh_index: dict[str, Node],
 ) -> None:
     for ace in obj.get("Aces") or []:
         right = ace.get("RightName") or ace.get("rightname")
         principal_sid = ace.get("PrincipalSID") or ace.get("principalid")
         if not right or not principal_sid:
             continue
-        # Find the principal node — upsert as user if unknown
-        principal_node = None
-        for existing in graph.nodes.values():
-            if existing.props.get("bh_id") == principal_sid:
-                principal_node = existing
-                break
+        # O(1) lookup via bh_index
+        principal_node = bh_index.get(principal_sid)
         if principal_node is None:
             principal_node = Node.make(
                 NodeKind.USER,
@@ -138,6 +140,7 @@ def _ingest_aces(
                 bh_type="Unknown",
             )
             graph.upsert_node(principal_node)
+            bh_index[principal_sid] = principal_node
 
         mapping = _BH_EDGE_MAP.get(right)
         if mapping:
@@ -158,17 +161,14 @@ def _ingest_aces(
 
 
 def _ingest_memberships(
-    graph: KnowledgeGraph, node: Node, obj: dict[str, Any], stats: ImportStats
+    graph: KnowledgeGraph, node: Node, obj: dict[str, Any], stats: ImportStats,
+    bh_index: dict[str, Node],
 ) -> None:
     for mem in obj.get("MemberOf") or []:
         sid = mem.get("ObjectIdentifier") or mem
         if not isinstance(sid, str):
             continue
-        parent = None
-        for existing in graph.nodes.values():
-            if existing.props.get("bh_id") == sid:
-                parent = existing
-                break
+        parent = bh_index.get(sid)
         if parent is None:
             parent = Node.make(
                 NodeKind.USER,
@@ -178,6 +178,7 @@ def _ingest_memberships(
                 bh_type="Group",
             )
             graph.upsert_node(parent)
+            bh_index[sid] = parent
         graph.upsert_edge(
             Edge.make(node.id, parent.id, EdgeKind.AUTH_AS, weight=0.8, bh_right="MemberOf")
         )
@@ -227,12 +228,15 @@ def merge_bloodhound_json(
         )
     counter_attr = object_type.lower()
 
+    bh_index = _build_bh_index(graph)
+
     for obj in items:
         if not isinstance(obj, dict):
             continue
         node = _upsert_bh_object(graph, obj, type_singular)
-        _ingest_aces(graph, node, obj, stats)
-        _ingest_memberships(graph, node, obj, stats)
+        bh_index[node.props.get("bh_id", "")] = node
+        _ingest_aces(graph, node, obj, stats, bh_index)
+        _ingest_memberships(graph, node, obj, stats, bh_index)
         if hasattr(stats, counter_attr):
             setattr(stats, counter_attr, getattr(stats, counter_attr) + 1)
     return stats
@@ -242,9 +246,14 @@ def ingest_bloodhound_zip(path: str | Path, graph: KnowledgeGraph) -> ImportStat
     """Walk a BloodHound collector zip and merge every JSON file inside."""
     total = ImportStats()
     p = Path(path)
+    _MAX_ENTRY_SIZE = 100_000_000  # 100 MB cap per entry (zip bomb defense)
+
     with zipfile.ZipFile(p) as zf:
         for name in zf.namelist():
             if not name.lower().endswith(".json"):
+                continue
+            info = zf.getinfo(name)
+            if info.file_size > _MAX_ENTRY_SIZE:
                 continue
             try:
                 raw = zf.read(name)
