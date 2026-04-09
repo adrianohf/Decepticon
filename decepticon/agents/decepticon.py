@@ -137,8 +137,9 @@ def create_decepticon_agent():
                 "dependency CVE sweeps, silent-patch diff hunting, fuzzing, taint "
                 "analysis for SSRF/SQLi/IDOR/deserialization/prototype-pollution/"
                 "command-injection/prompt-injection, and multi-hop exploit chain "
-                "construction. Writes all observations into /workspace/kg.json "
-                "(KnowledgeGraph) so findings survive across iterations."
+                "construction. Writes all observations into the KnowledgeGraph "
+                "backend (default /workspace/kg.json, optional Neo4j) so "
+                "findings survive across iterations."
             ),
             runnable=StreamingRunnable(create_analyst_agent(), "analyst"),
         ),

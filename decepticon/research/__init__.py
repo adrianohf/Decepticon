@@ -10,8 +10,9 @@ High-value capabilities for 0-day discovery and exploit chain construction:
 - ``fuzz``   — Fuzzing orchestration (libFuzzer, AFL++, jazzer, boofuzz)
 - ``tools``  — LangChain @tool wrappers exposing all of the above to agents
 
-All state lives in /workspace/kg.json (the sandbox-bound knowledge graph)
-so findings survive fresh Ralph iterations and cross-agent handoffs.
+State defaults to /workspace/kg.json (sandbox-bound JSON graph), with an
+optional Neo4j backend via DECEPTICON_KG_BACKEND=neo4j for larger
+multi-agent workloads.
 """
 
 from __future__ import annotations

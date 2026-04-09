@@ -19,11 +19,11 @@ import asyncio
 import hashlib
 import json
 import re
-import defusedxml.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import defusedxml.ElementTree as ET
 from langchain_core.tools import tool
 
 from decepticon.contracts.patterns import scan_solidity_source
@@ -64,6 +64,7 @@ log = get_logger("research.tools")
 # private names so the existing ~1500 call sites keep working.
 from decepticon.research._state import (  # noqa: E402
     _json,
+    _kg_backend_name,
     _load,
     _save,
 )
@@ -481,7 +482,7 @@ def kg_stats() -> str:
     """Return counts of nodes and edges by kind. Cheapest way to sanity check
     graph state at iteration start. Returns JSON stats dict."""
     graph, path = _load()
-    return _json({"path": str(path), **graph.stats()})
+    return _json({"path": str(path), "backend": _kg_backend_name(), **graph.stats()})
 
 
 # ── CVE intelligence ────────────────────────────────────────────────────
@@ -716,6 +717,8 @@ def kg_ingest_nmap_xml(path: str, scanner_hint: str = "nmap") -> str:
         root = ET.parse(path).getroot()
     except (OSError, ET.ParseError) as e:
         return _json({"error": f"failed to parse nmap xml: {e}"})
+    if root is None:
+        return _json({"error": "failed to parse nmap xml: empty document"})
 
     hosts_added = 0
     services_added = 0

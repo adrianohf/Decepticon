@@ -12,41 +12,35 @@ from decepticon.ad.adcs import analyze_adcs_templates
 from decepticon.ad.bloodhound import ingest_bloodhound_zip, merge_bloodhound_json
 from decepticon.ad.dcsync import dcsync_candidates
 from decepticon.ad.kerberos import classify_hashcat_hash, parse_ticket
-from decepticon.research.graph import DEFAULT_PATH, load_graph, save_graph
+from decepticon.research._state import _load, _save
 
 
 def _json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
-def _kg_path() -> Path:
-    import os
-
-    return Path(os.environ.get("DECEPTICON_KG_PATH", str(DEFAULT_PATH)))
-
-
 @tool
 def bh_ingest_zip(path: str) -> str:
     """Merge a BloodHound collector ZIP into the KnowledgeGraph."""
-    graph = load_graph(_kg_path())
+    graph, kg_path = _load()
     try:
         stats = ingest_bloodhound_zip(path, graph)
     except OSError as e:
         return _json({"error": str(e)})
-    save_graph(graph, _kg_path())
+    _save(graph, kg_path)
     return _json({"import": stats.to_dict(), "stats": graph.stats()})
 
 
 @tool
 def bh_ingest_json(path: str, type_hint: str = "") -> str:
     """Merge a single BloodHound JSON file into the KnowledgeGraph."""
-    graph = load_graph(_kg_path())
+    graph, kg_path = _load()
     try:
         data = Path(path).read_text(encoding="utf-8")
     except OSError as e:
         return _json({"error": str(e)})
     stats = merge_bloodhound_json(data, graph, type_hint=type_hint or None)
-    save_graph(graph, _kg_path())
+    _save(graph, kg_path)
     return _json({"import": stats.to_dict(), "stats": graph.stats()})
 
 
@@ -56,7 +50,7 @@ def dcsync_check() -> str:
 
     Run after ``bh_ingest_*``.
     """
-    graph = load_graph(_kg_path())
+    graph, _ = _load()
     hits = dcsync_candidates(graph)
     return _json(
         {

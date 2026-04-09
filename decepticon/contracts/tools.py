@@ -15,17 +15,11 @@ from decepticon.contracts.foundry import (
 )
 from decepticon.contracts.patterns import scan_solidity_source
 from decepticon.contracts.slither import ingest_slither_json
-from decepticon.research.graph import DEFAULT_PATH, load_graph, save_graph
+from decepticon.research._state import _load, _save
 
 
 def _json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
-
-
-def _graph_path() -> Path:
-    import os
-
-    return Path(os.environ.get("DECEPTICON_KG_PATH", str(DEFAULT_PATH)))
 
 
 @tool
@@ -67,9 +61,9 @@ def slither_ingest(path: str) -> str:
         data = Path(path).read_text(encoding="utf-8")
     except OSError as e:
         return _json({"error": str(e)})
-    graph = load_graph(_graph_path())
+    graph, kg_path = _load()
     count = ingest_slither_json(data, graph)
-    save_graph(graph, _graph_path())
+    _save(graph, kg_path)
     return _json({"ingested": count, "stats": graph.stats()})
 
 

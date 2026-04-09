@@ -1,7 +1,9 @@
 """KnowledgeGraph — persistent vulnerability research graph.
 
-Survives Ralph fresh-iteration resets by serialising to JSON on disk
-(``/workspace/kg.json`` inside the sandbox, bind-mounted to the host).
+Survives Ralph fresh-iteration resets by serialising to JSON on disk by
+default (``/workspace/kg.json`` inside the sandbox, bind-mounted to the
+host). The runtime persistence backend can be swapped to Neo4j via
+``decepticon.research._state`` environment configuration.
 
 Schema
 ------

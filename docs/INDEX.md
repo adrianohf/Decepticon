@@ -11,6 +11,9 @@ docs/
 ├── INDEX.md
 ├── architecture/                    # 에이전트 내부 아키텍처
 │   └── context-engineering.md
+├── design/                          # 설계 결정 / 기술 방향
+│   ├── opplan-middleware.md
+│   └── single-bash-and-graphdb.md
 ├── red-team/                        # Red Team 도메인 지식
 │   ├── operations.md
 │   ├── recon-methodology.md
@@ -35,6 +38,13 @@ docs/
 | 문서 | 내용 | 참조 시점 |
 |------|------|----------|
 | [context-engineering.md](architecture/context-engineering.md) | 컨텍스트 윈도우 관리, observation masking, progressive disclosure, 메모리 전략 | 에이전트 내부 구조 작업 시 |
+
+## design/ — 설계 문서
+
+| 문서 | 내용 | 참조 시점 |
+|------|------|----------|
+| [opplan-middleware.md](design/opplan-middleware.md) | OPPLAN 미들웨어 설계/트레이드오프/동시성 제약 | OPPLAN 도구 확장/수정 시 |
+| [single-bash-and-graphdb.md](design/single-bash-and-graphdb.md) | single-bash 철학, Neo4j 백엔드 마이그레이션, Security-AGI 방향성 | 공격 실행 표면/그래프 저장소 설계 시 |
 
 ## red-team/ — Red Team 도메인 문서
 

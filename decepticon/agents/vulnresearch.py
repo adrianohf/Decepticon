@@ -3,9 +3,10 @@
 Mirrors :mod:`decepticon.agents.decepticon` (the red-team orchestrator)
 but swaps the sub-agent roster for the five vulnresearch specialists:
 scanner → detector → verifier → patcher → exploiter. State passes
-between stages exclusively through ``/workspace/kg.json`` (the
-:class:`KnowledgeGraph`), so every sub-agent runs with fresh context and
-only reads the slice of the graph that matters for its work item.
+between stages exclusively through the KnowledgeGraph backend (default
+``/workspace/kg.json``; optional Neo4j), so every sub-agent runs with
+fresh context and only reads the slice of graph state that matters for
+its work item.
 
 Design notes:
   - Uses ``create_agent()`` directly with an explicit middleware stack

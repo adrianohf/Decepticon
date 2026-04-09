@@ -1,4 +1,9 @@
-"""Kali CLI tool wrappers.
+"""Kali CLI wrapper package (legacy compatibility layer).
+
+NOTE:
+Runtime operational agents follow the "single bash tool" philosophy and
+no longer mount ``KALI_TOOLS`` in their primary tool lists. This package is
+kept for compatibility, targeted ingestion workflows, and transition support.
 
 Thin LangChain ``@tool`` wrappers over the most-used Kali binaries.
 Each wrapper:

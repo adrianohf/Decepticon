@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
@@ -12,23 +11,17 @@ from decepticon.reporting.bugcrowd import render_bugcrowd_csv
 from decepticon.reporting.executive import render_executive_summary
 from decepticon.reporting.hackerone import render_hackerone_markdown
 from decepticon.reporting.timeline import extract_timeline
-from decepticon.research.graph import DEFAULT_PATH, load_graph
+from decepticon.research._state import _load
 
 
 def _json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
-def _kg_path() -> Path:
-    import os
-
-    return Path(os.environ.get("DECEPTICON_KG_PATH", str(DEFAULT_PATH)))
-
-
 @tool
 def report_hackerone(finding_id: str) -> str:
     """Render a HackerOne-style markdown report for a finding or vulnerability node."""
-    graph = load_graph(_kg_path())
+    graph, _ = _load()
     node = graph.nodes.get(finding_id)
     if node is None:
         return _json({"error": f"no node {finding_id} in graph"})
@@ -39,7 +32,7 @@ def report_hackerone(finding_id: str) -> str:
 @tool
 def report_bugcrowd_csv(min_severity: str = "medium") -> str:
     """Render the current graph as a Bugcrowd CSV submission bundle."""
-    graph = load_graph(_kg_path())
+    graph, _ = _load()
     csv = render_bugcrowd_csv(graph, min_severity=min_severity)
     return _json({"rows": csv.count("\n") - 1, "csv": csv})
 
@@ -47,7 +40,7 @@ def report_bugcrowd_csv(min_severity: str = "medium") -> str:
 @tool
 def report_executive(engagement_name: str = "Engagement") -> str:
     """Produce an engagement-level executive summary from the graph."""
-    graph = load_graph(_kg_path())
+    graph, _ = _load()
     md = render_executive_summary(graph, engagement_name=engagement_name)
     return _json({"markdown": md})
 
@@ -55,7 +48,7 @@ def report_executive(engagement_name: str = "Engagement") -> str:
 @tool
 def report_timeline() -> str:
     """Extract a chronological timeline of graph events."""
-    graph = load_graph(_kg_path())
+    graph, _ = _load()
     events = extract_timeline(graph)
     return _json({"count": len(events), "events": [e.to_dict() for e in events]})
 
