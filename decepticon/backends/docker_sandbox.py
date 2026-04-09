@@ -13,6 +13,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import functools
 import io
 import logging
 import re
@@ -29,26 +30,30 @@ from deepagents.backends.protocol import (
 )
 from deepagents.backends.sandbox import BaseSandbox
 
-from decepticon.core.config import load_config
-
 log = logging.getLogger("decepticon.backends.docker_sandbox")
 
+
+@functools.lru_cache(maxsize=1)
+def _docker_cfg():
+    """Lazy-load DockerConfig to avoid import-time side effects."""
+    from decepticon.core.config import load_config
+
+    return load_config().docker
+
+
 # ─── Constants ───────────────────────────────────────────────────────────
-#
-# Tunables now live on DockerConfig (decepticon.core.config) and can be
-# overridden via DECEPTICON_DOCKER__<NAME> env vars. The module-level
-# constants below are kept as backwards-compatible defaults sourced from
-# the loaded config at import time, so existing tests/imports still work.
 
 PS1_PATTERN = re.compile(r"\[DCPTN:(\d+):(.+?)\]")
 
-_cfg = load_config().docker
-POLL_INTERVAL: float = _cfg.poll_interval
-STALL_SECONDS: float = _cfg.stall_seconds
-MAX_OUTPUT_CHARS: int = _cfg.max_output_chars
-AUTO_BACKGROUND_SECONDS: float = _cfg.auto_background_seconds
-SIZE_WATCHDOG_CHARS: int = _cfg.size_watchdog_chars
-SIZE_WATCHDOG_INTERVAL: float = _cfg.size_watchdog_interval
+# Backwards-compatible module-level defaults. Code that reads these at
+# import time gets the hardcoded values; runtime code should prefer
+# _docker_cfg().<field> to pick up env-var overrides.
+POLL_INTERVAL: float = 0.5
+STALL_SECONDS: float = 3.0
+MAX_OUTPUT_CHARS: int = 30_000
+AUTO_BACKGROUND_SECONDS: float = 60.0
+SIZE_WATCHDOG_CHARS: int = 5_000_000
+SIZE_WATCHDOG_INTERVAL: float = 5.0
 
 # ─── Semantic exit code interpretation (Claude Code best practice) ────────
 _EXIT_CODE_MESSAGES: dict[int, str] = {
@@ -91,14 +96,11 @@ class TmuxSessionManager:
     """
 
     _initialized: set[str] = set()
-    _init_lock: "threading.RLock" = None  # type: ignore[assignment]
+    _init_lock: threading.RLock = threading.RLock()
 
     def __init__(self, session: str, container_name: str) -> None:
         self.session = session
         self._container = container_name
-        # Lazy-init the class-level lock so module import is side-effect free.
-        if TmuxSessionManager._init_lock is None:
-            TmuxSessionManager._init_lock = threading.RLock()
 
     # ── docker / tmux helpers ──
 

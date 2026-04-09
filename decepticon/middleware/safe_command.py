@@ -188,8 +188,25 @@ def _check_argv(argv: list[str]) -> str | None:
             return "Mounting /proc or /sys filesystems is blocked for sandbox safety."
         return None
 
+    # ── eval / bash -c / interpreter -c (bypass vectors) ────────────
+    if head == "eval":
+        return (
+            "eval is blocked — it can execute arbitrary commands that "
+            "bypass safety checks. Run the command directly instead."
+        )
+    if head in ("bash", "sh", "zsh", "dash") and "-c" in rest:
+        return (
+            f"{head} -c is blocked — the inner command bypasses safety "
+            "checks. Run the command directly instead."
+        )
+    if head in ("python", "python3", "perl", "ruby", "node") and "-c" in rest:
+        return (
+            f"{head} -c is blocked — interpreter execution may bypass "
+            "command safety checks."
+        )
+
     # ── firewall modification (iptables family) ──────────────────────
-    if head in ("iptables", "ip6tables", "nftables"):
+    if head in ("iptables", "ip6tables", "nft", "nftables"):
         return (
             "Firewall rule modification is blocked — may violate Rules "
             "of Engagement. Document the finding and request RoE "
