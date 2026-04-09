@@ -33,7 +33,6 @@ from decepticon.research import cve as cve_mod
 from decepticon.research import fuzz as fuzz_mod
 from decepticon.research.chain import critical_path_score, plan_chains, promote_chain
 from decepticon.research.graph import (
-    DEFAULT_PATH,
     SEVERITY_SCORE,
     Edge,
     EdgeKind,
@@ -41,8 +40,6 @@ from decepticon.research.graph import (
     Node,
     NodeKind,
     Severity,
-    load_graph,
-    save_graph,
 )
 from decepticon.research.patch import PATCH_TOOLS
 from decepticon.research.sarif import ingest_sarif_file
@@ -66,9 +63,7 @@ log = get_logger("research.tools")
 # file (which would be circular). Re-exported here under their original
 # private names so the existing ~1500 call sites keep working.
 from decepticon.research._state import (  # noqa: E402
-    _invalidate_kg_cache,
     _json,
-    _kg_path,
     _load,
     _save,
 )

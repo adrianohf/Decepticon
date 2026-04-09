@@ -436,21 +436,40 @@ def rank_candidates(shard_results: str, top_k: int = 50) -> str:
     """
     raw = shard_results.strip()
     blobs: list[dict[str, Any]] = []
-    # Accept either a JSON array or newline-separated JSON blobs.
-    if raw.startswith("["):
-        try:
-            blobs = json.loads(raw)
-        except json.JSONDecodeError as e:
-            return _json({"error": f"bad JSON array: {e}"})
+    # Three accepted shapes:
+    #   1. A single JSON object (one shard)
+    #   2. A JSON array of shard objects
+    #   3. Several JSON objects concatenated back-to-back
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        blobs = [parsed]
+    elif isinstance(parsed, list):
+        blobs = [b for b in parsed if isinstance(b, dict)]
     else:
-        for chunk in re.split(r"\n(?=\s*\{)", raw):
-            chunk = chunk.strip()
-            if not chunk:
-                continue
-            try:
-                blobs.append(json.loads(chunk))
-            except json.JSONDecodeError:
-                continue
+        # Fallback: walk a depth counter to find balanced top-level
+        # objects. Handles newline-separated and concatenated JSON
+        # without mis-splitting on indented nested objects.
+        depth = 0
+        start = -1
+        for i, ch in enumerate(raw):
+            if ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    chunk = raw[start : i + 1]
+                    try:
+                        obj = json.loads(chunk)
+                        if isinstance(obj, dict):
+                            blobs.append(obj)
+                    except json.JSONDecodeError:
+                        pass
+                    start = -1
 
     seen: dict[tuple[str, int, str], dict[str, Any]] = {}
     total = 0
