@@ -27,4 +27,7 @@ RUN uv pip install --system -e "." && \
 
 EXPOSE 2024
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -fsS http://localhost:2024/ok >/dev/null 2>&1 || exit 1
+
 CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "2024", "--no-browser"]

@@ -3,7 +3,8 @@ name = "decepticon"
 version = "1.0.3"
 description = "AI-powered autonomous red team testing framework"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 
 authors = [
@@ -16,10 +17,10 @@ keywords = [
 ]
 
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
@@ -79,3 +80,76 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+
+[tool.coverage.run]
+source = ["decepticon"]
+branch = true
+omit = [
+    "decepticon/__main__.py",
+    "decepticon/auth/providers/*",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+]
+show_missing = true
+skip_covered = false
+
+[tool.basedpyright]
+pythonVersion = "3.13"
+include = ["decepticon", "tests"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    "reference",
+    "decepticon/auth/providers",
+]
+# Use pyright "standard" semantics rather than the basedpyright "all" default —
+# the existing codebase predates basedpyright's stricter rules. As code is
+# annotated over time, individual reports can be ratcheted back to "error".
+typeCheckingMode = "standard"
+reportMissingImports = "warning"
+reportMissingTypeStubs = "none"
+# Unknown types — common with langchain/langgraph dynamic interfaces
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownVariableType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+reportMissingTypeArgument = "none"
+# basedpyright extras that fire on idiomatic Python
+reportAny = "none"
+reportExplicitAny = "none"
+reportImplicitOverride = "none"
+reportUnusedCallResult = "none"
+reportUnannotatedClassAttribute = "none"
+reportUninitializedInstanceVariable = "none"
+reportImplicitStringConcatenation = "none"
+reportPrivateUsage = "none"
+reportImportCycles = "none"
+reportPropertyTypeMismatch = "none"
+reportIgnoreCommentWithoutRule = "none"
+# Demote pre-existing issues to warnings (still surfaced, but non-blocking).
+# Real attribute-access bugs in newly-written code should still be caught:
+# add a # pyright: ignore[reportAttributeAccessIssue] comment at the call site
+# instead of escalating this back to "error" wholesale.
+reportAttributeAccessIssue = "warning"
+reportOperatorIssue = "warning"
+reportArgumentType = "warning"
+reportCallIssue = "warning"
+reportAssignmentType = "warning"
+reportReturnType = "warning"
+reportGeneralTypeIssues = "warning"

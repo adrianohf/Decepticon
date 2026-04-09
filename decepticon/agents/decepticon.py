@@ -84,9 +84,14 @@ def create_decepticon_agent():
     )
 
     # Build sub-agents from existing agent factories
+    from decepticon.agents.ad_operator import create_ad_operator_agent
+    from decepticon.agents.analyst import create_analyst_agent
+    from decepticon.agents.cloud_hunter import create_cloud_hunter_agent
+    from decepticon.agents.contract_auditor import create_contract_auditor_agent
     from decepticon.agents.exploit import create_exploit_agent
     from decepticon.agents.postexploit import create_postexploit_agent
     from decepticon.agents.recon import create_recon_agent
+    from decepticon.agents.reverser import create_reverser_agent
     from decepticon.agents.soundwave import create_soundwave_agent
 
     # Wrap each sub-agent with StreamingRunnable so their tool calls, results,
@@ -123,6 +128,62 @@ def create_decepticon_agent():
                 "Saves results to /workspace/exploit/"
             ),
             runnable=StreamingRunnable(create_exploit_agent(), "exploit"),
+        ),
+        CompiledSubAgent(
+            name="analyst",
+            description=(
+                "Vulnerability research agent — the high-value discovery lane. "
+                "Use for: source code review, static analysis (semgrep/bandit/gitleaks), "
+                "dependency CVE sweeps, silent-patch diff hunting, fuzzing, taint "
+                "analysis for SSRF/SQLi/IDOR/deserialization/prototype-pollution/"
+                "command-injection/prompt-injection, and multi-hop exploit chain "
+                "construction. Writes all observations into /workspace/kg.json "
+                "(KnowledgeGraph) so findings survive across iterations."
+            ),
+            runnable=StreamingRunnable(create_analyst_agent(), "analyst"),
+        ),
+        CompiledSubAgent(
+            name="reverser",
+            description=(
+                "Binary reversing specialist. Use for ELF/PE/Mach-O/firmware triage, "
+                "packer detection, classified string extraction, symbol risk reports, "
+                "ROP gadget inventories, and Ghidra/radare2 recon script generation. "
+                "Ideal for thick clients, IoT firmware, game cheats, malware triage, "
+                "and exploit dev hand-offs."
+            ),
+            runnable=StreamingRunnable(create_reverser_agent(), "reverser"),
+        ),
+        CompiledSubAgent(
+            name="contract_auditor",
+            description=(
+                "Solidity / EVM smart contract audit specialist. Use for DeFi / "
+                "smart-contract engagements: reentrancy, oracle manipulation, flash "
+                "loan abuse, access control gaps, upgradeable proxies, signature "
+                "replay. Runs Slither ingestion, solidity pattern scanner, and "
+                "Foundry PoC test harness generation."
+            ),
+            runnable=StreamingRunnable(create_contract_auditor_agent(), "contract_auditor"),
+        ),
+        CompiledSubAgent(
+            name="cloud_hunter",
+            description=(
+                "AWS / Azure / GCP / Kubernetes exploitation specialist. Use for "
+                "IAM policy privesc, S3 bucket takeover, Kubernetes RBAC / hostPath "
+                "escapes, Terraform state secret extraction, and cloud metadata "
+                "pivoting after an SSRF is confirmed by recon or analyst."
+            ),
+            runnable=StreamingRunnable(create_cloud_hunter_agent(), "cloud_hunter"),
+        ),
+        CompiledSubAgent(
+            name="ad_operator",
+            description=(
+                "Active Directory / Windows attack specialist. Use after initial "
+                "internal foothold: BloodHound ingestion, Kerberoast / AS-REP roast, "
+                "ADCS ESC1-ESC15 scanning, DCSync candidate detection, and multi-hop "
+                "AD attack path planning. Complements postexploit for Windows "
+                "engagements."
+            ),
+            runnable=StreamingRunnable(create_ad_operator_agent(), "ad_operator"),
         ),
         CompiledSubAgent(
             name="postexploit",

@@ -25,4 +25,6 @@ COPY --from=builder /app/clients/cli/src ./src
 ENV DECEPTICON_API_URL=http://langgraph:2024
 ENV NODE_ENV=production
 
+# No HEALTHCHECK — CLI is an interactive TTY app with no HTTP surface.
+
 ENTRYPOINT ["node", "--import", "tsx/esm", "src/index.tsx"]
