@@ -44,6 +44,7 @@ class TestLLMModelMapping:
         assert mapping.decepticon is not None
         assert mapping.recon is not None
         assert mapping.exploit is not None
+        assert mapping.analyst is not None
         assert mapping.planning is not None
         assert mapping.soundwave is not None
         assert mapping.postexploit is not None
@@ -84,7 +85,15 @@ class TestLLMModelMapping:
     def test_all_roles_have_fallback(self):
         """Every role has a fallback for resilience (eco profile)."""
         mapping = LLMModelMapping()
-        for role in ("decepticon", "planning", "soundwave", "exploit", "recon", "postexploit"):
+        for role in (
+            "decepticon",
+            "planning",
+            "soundwave",
+            "exploit",
+            "analyst",
+            "recon",
+            "postexploit",
+        ):
             assert mapping.get_assignment(role).fallback is not None
 
 
@@ -94,14 +103,22 @@ class TestModelProfile:
     def test_eco_profile_matches_bare_constructor(self):
         eco = LLMModelMapping.from_profile("eco")
         bare = LLMModelMapping()
-        for role in ("decepticon", "planning", "soundwave", "exploit", "recon", "postexploit"):
+        for role in (
+            "decepticon",
+            "planning",
+            "soundwave",
+            "exploit",
+            "analyst",
+            "recon",
+            "postexploit",
+        ):
             assert eco.get_assignment(role).primary == bare.get_assignment(role).primary
             assert eco.get_assignment(role).fallback == bare.get_assignment(role).fallback
 
     def test_max_profile_uses_opus_everywhere(self):
         """Max profile puts Opus on all roles except recon (Sonnet) and soundwave (Sonnet)."""
         maxp = LLMModelMapping.from_profile(ModelProfile.MAX)
-        for role in ("decepticon", "planning", "exploit", "postexploit"):
+        for role in ("decepticon", "planning", "exploit", "analyst", "postexploit"):
             assert maxp.get_assignment(role).primary == OPUS
         assert maxp.get_assignment("recon").primary == SONNET
         assert maxp.get_assignment("soundwave").primary == SONNET
@@ -109,7 +126,7 @@ class TestModelProfile:
     def test_max_profile_anthropic_only_fallbacks(self):
         """Max profile fallbacks stay within Anthropic where possible."""
         maxp = LLMModelMapping.from_profile("max")
-        for role in ("planning", "exploit", "postexploit"):
+        for role in ("planning", "exploit", "analyst", "postexploit"):
             assert maxp.get_assignment(role).fallback == SONNET
         assert maxp.get_assignment("recon").fallback == OPUS
         assert maxp.get_assignment("decepticon").fallback == GPT_5
@@ -117,7 +134,15 @@ class TestModelProfile:
     def test_test_profile_all_haiku(self):
         """Test profile uses Haiku everywhere for minimum cost."""
         test = LLMModelMapping.from_profile("test")
-        for role in ("decepticon", "planning", "soundwave", "exploit", "recon", "postexploit"):
+        for role in (
+            "decepticon",
+            "planning",
+            "soundwave",
+            "exploit",
+            "analyst",
+            "recon",
+            "postexploit",
+        ):
             assignment = test.get_assignment(role)
             assert assignment.primary == HAIKU
             assert assignment.fallback is None

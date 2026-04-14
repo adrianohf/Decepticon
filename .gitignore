@@ -81,6 +81,12 @@ demo.tape
 # Decepticon runtime data
 .decepticon/
 workspace/
+.bg-shell/
 
 .langgraph_api/
 .omc/
+.ouroboros/
+.gstack/
+
+# Project-specific Claude Code instructions (private)
+CLAUDE.md

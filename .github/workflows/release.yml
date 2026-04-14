@@ -7,6 +7,8 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write   # cosign keyless OIDC
+  attestations: write
 
 jobs:
   docker:
@@ -41,14 +43,52 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v7
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Build & push image
+        id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platforms }}
           push: true
+          provenance: mode=max
+          sbom: true
           tags: |
             ghcr.io/purpleailab/${{ matrix.image }}:${{ steps.version.outputs.version }}
             ghcr.io/purpleailab/${{ matrix.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Cosign sign image (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes \
+            "ghcr.io/purpleailab/${{ matrix.image }}@${DIGEST}"
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/purpleailab/${{ matrix.image }}:${{ steps.version.outputs.version }}
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.image }}.cdx.json
+
+      - name: Attest SBOM with cosign
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest --yes \
+            --predicate sbom-${{ matrix.image }}.cdx.json \
+            --type cyclonedx \
+            "ghcr.io/purpleailab/${{ matrix.image }}@${DIGEST}"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.image }}
+          path: sbom-${{ matrix.image }}.cdx.json

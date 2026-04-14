@@ -10,7 +10,7 @@
 COMPOSE := docker compose
 COMPOSE_CLI := $(COMPOSE) --profile cli
 
-.PHONY: dev start cli stop status logs build test lint clean
+.PHONY: dev start cli stop status logs kg-health neo4j-health build test test-cli lint lint-cli quality clean
 
 # ── Development ──────────────────────────────────────────────────
 
@@ -36,6 +36,14 @@ stop:
 status:
 	$(COMPOSE) ps
 
+## Knowledge-graph backend health from the running LangGraph container
+kg-health:
+	$(COMPOSE) exec langgraph python -m decepticon.research.health
+
+## Direct Neo4j startup check (cypher-shell RETURN 1)
+neo4j-health:
+	$(COMPOSE) exec neo4j cypher-shell -u neo4j -p "$${NEO4J_PASSWORD:-decepticon-graph}" "RETURN 1 AS ok;"
+
 ## Follow service logs (usage: make logs or make logs SVC=langgraph)
 logs:
 	$(COMPOSE) logs -f $(or $(SVC),langgraph)
@@ -60,16 +68,37 @@ test:
 test-local:
 	pytest $(ARGS)
 
-## Lint and typecheck locally
+## Lint and typecheck Python locally
 lint:
 	ruff check .
 	ruff format --check .
 	basedpyright
 
-## Auto-fix lint issues
+## Auto-fix Python lint issues
 lint-fix:
 	ruff check --fix .
 	ruff format .
+
+## CLI (TypeScript) quality gates — mirror the CI workflow so local
+## runs catch CLI breakage before push. These three targets are what
+## unblocked the HIGH-1 finding: build + typecheck + vitest all exist
+## in the CLI workspace but the default `make lint` never ran them.
+lint-cli:
+	npm run typecheck --workspace=@decepticon/cli
+
+build-cli:
+	npm run build --workspace=@decepticon/cli
+
+test-cli:
+	npm run test --workspace=@decepticon/cli
+
+## Single command that exercises EVERY quality gate locally —
+## Python lint + Python tests + CLI typecheck + CLI build + CLI tests.
+## Run this before opening a PR so a CLI-workspace break cannot slip
+## through the way it did prior to the HIGH-1 finding.
+quality: lint test-local lint-cli build-cli test-cli
+	@echo ""
+	@echo "OK — all quality gates passed (python + cli)"
 
 # ── Victim Targets (demo/testing) ───────────────────────────────
 
@@ -103,14 +132,24 @@ help:
 	@echo "Production-like:"
 	@echo "  make start      Build + start in background"
 	@echo "  make stop       Stop all services"
-	@echo "  make status     Show service status"
-	@echo "  make logs       Follow logs (SVC=langgraph)"
+	@echo "  make status       Show service status"
+	@echo "  make kg-health    Graph backend health (from langgraph container)"
+	@echo "  make neo4j-health Direct Neo4j startup check (cypher-shell)"
+	@echo "  make logs         Follow logs (SVC=langgraph)"
 	@echo ""
-	@echo "Quality:"
-	@echo "  make test       Run pytest in container"
-	@echo "  make test-local Run pytest locally"
-	@echo "  make lint       Lint + typecheck"
-	@echo "  make lint-fix   Auto-fix lint issues"
+	@echo "Quality (Python):"
+	@echo "  make test        Run pytest in container"
+	@echo "  make test-local  Run pytest locally"
+	@echo "  make lint        Python lint + typecheck"
+	@echo "  make lint-fix    Auto-fix Python lint issues"
+	@echo ""
+	@echo "Quality (CLI — TypeScript):"
+	@echo "  make lint-cli    Typecheck the Ink CLI workspace"
+	@echo "  make build-cli   Build the Ink CLI workspace"
+	@echo "  make test-cli    Run vitest in the CLI workspace"
+	@echo ""
+	@echo "Combined:"
+	@echo "  make quality     Python + CLI — run before every PR"
 	@echo ""
 	@echo "Other:"
 	@echo "  make build      Build all Docker images"

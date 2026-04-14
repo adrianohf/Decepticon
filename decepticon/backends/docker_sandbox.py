@@ -13,12 +13,14 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import functools
 import io
 import logging
 import re
 import subprocess
 import tarfile
 import tempfile
+import threading
 import time
 
 from deepagents.backends.protocol import (
@@ -30,19 +32,28 @@ from deepagents.backends.sandbox import BaseSandbox
 
 log = logging.getLogger("decepticon.backends.docker_sandbox")
 
-# ─── Constants (transplanted from tools/bash/tool.py) ────────────────────
+
+@functools.lru_cache(maxsize=1)
+def _docker_cfg():
+    """Lazy-load DockerConfig to avoid import-time side effects."""
+    from decepticon.core.config import load_config
+
+    return load_config().docker
+
+
+# ─── Constants ───────────────────────────────────────────────────────────
 
 PS1_PATTERN = re.compile(r"\[DCPTN:(\d+):(.+?)\]")
-POLL_INTERVAL = 0.5  # seconds between capture-pane polls
-STALL_SECONDS = 3.0  # seconds of no screen change → treat as interactive prompt
-MAX_OUTPUT_CHARS = 30_000
 
-# ─── Auto-background: convert blocking commands to background after threshold ─
-AUTO_BACKGROUND_SECONDS = 60.0  # auto-background after 60s of blocking
-
-# ─── Size watchdog: kill commands producing excessive output ──────────────
-SIZE_WATCHDOG_CHARS = 5_000_000  # 5M chars → force-kill the command
-SIZE_WATCHDOG_INTERVAL = 5.0  # check every 5 seconds
+# Backwards-compatible module-level defaults. Code that reads these at
+# import time gets the hardcoded values; runtime code should prefer
+# _docker_cfg().<field> to pick up env-var overrides.
+POLL_INTERVAL: float = 0.5
+STALL_SECONDS: float = 3.0
+MAX_OUTPUT_CHARS: int = 30_000
+AUTO_BACKGROUND_SECONDS: float = 60.0
+SIZE_WATCHDOG_CHARS: int = 5_000_000
+SIZE_WATCHDOG_INTERVAL: float = 5.0
 
 # ─── Semantic exit code interpretation (Claude Code best practice) ────────
 _EXIT_CODE_MESSAGES: dict[int, str] = {
@@ -78,9 +89,14 @@ class TmuxSessionManager:
 
     Transplanted from tools/bash/tool.py; docker exec calls now go directly
     through subprocess instead of the old run_in_sandbox() helper.
+
+    Thread-safety: ``_initialized`` is process-wide shared state. The
+    ``_init_lock`` (threading.RLock) guards add/discard/clear so concurrent
+    sessions cannot race during init or cache invalidation.
     """
 
     _initialized: set[str] = set()
+    _init_lock: threading.RLock = threading.RLock()
 
     def __init__(self, session: str, container_name: str) -> None:
         self.session = session
@@ -103,7 +119,8 @@ class TmuxSessionManager:
             # Detect tmux server death and invalidate session cache
             if "no server running" in error_msg or "server exited" in error_msg:
                 log.warning("tmux server died — invalidating all session caches")
-                TmuxSessionManager._initialized.clear()
+                with TmuxSessionManager._init_lock:
+                    TmuxSessionManager._initialized.clear()
             raise RuntimeError(error_msg)
         return result.stdout
 
@@ -137,8 +154,9 @@ class TmuxSessionManager:
 
     def initialize(self) -> None:
         """Create session if needed and inject PS1 marker (once per session)."""
-        if self.session in TmuxSessionManager._initialized:
-            return
+        with TmuxSessionManager._init_lock:
+            if self.session in TmuxSessionManager._initialized:
+                return
 
         session_exists = False
         try:
@@ -180,7 +198,8 @@ class TmuxSessionManager:
             except Exception:
                 pass  # pipe-pane is optional
 
-        TmuxSessionManager._initialized.add(self.session)
+        with TmuxSessionManager._init_lock:
+            TmuxSessionManager._initialized.add(self.session)
 
     # ── execution ──
 
@@ -205,7 +224,8 @@ class TmuxSessionManager:
             error_msg = str(e)
             if "no server running" in error_msg or "session not found" in error_msg:
                 log.warning("Session '%s' is dead — attempting recovery", self.session)
-                TmuxSessionManager._initialized.discard(self.session)
+                with TmuxSessionManager._init_lock:
+                    TmuxSessionManager._initialized.discard(self.session)
                 try:
                     self.initialize()
                     baseline = self._capture()
@@ -239,7 +259,8 @@ class TmuxSessionManager:
                 screen = self._capture()
             except RuntimeError as poll_err:
                 if "no server running" in str(poll_err):
-                    TmuxSessionManager._initialized.discard(self.session)
+                    with TmuxSessionManager._init_lock:
+                        TmuxSessionManager._initialized.discard(self.session)
                     return (
                         f"[ERROR] tmux session '{self.session}' was destroyed mid-command.\n"
                         f"The command likely killed the shell process (e.g. pkill bash).\n"
@@ -338,7 +359,8 @@ class TmuxSessionManager:
             error_msg = str(e)
             if "no server running" in error_msg or "session not found" in error_msg:
                 log.warning("Session '%s' is dead — attempting recovery", self.session)
-                TmuxSessionManager._initialized.discard(self.session)
+                with TmuxSessionManager._init_lock:
+                    TmuxSessionManager._initialized.discard(self.session)
                 try:
                     await asyncio.to_thread(self.initialize)
                     baseline = await asyncio.to_thread(self._capture)
@@ -374,7 +396,8 @@ class TmuxSessionManager:
                 screen = await asyncio.to_thread(self._capture)
             except RuntimeError as poll_err:
                 if "no server running" in str(poll_err):
-                    TmuxSessionManager._initialized.discard(self.session)
+                    with TmuxSessionManager._init_lock:
+                        TmuxSessionManager._initialized.discard(self.session)
                     return (
                         f"[ERROR] tmux session '{self.session}' was destroyed mid-command.\n"
                         f"The command likely killed the shell process (e.g. pkill bash).\n"

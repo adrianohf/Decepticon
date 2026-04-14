@@ -131,6 +131,49 @@ class LLMModelMapping(BaseModel):
         )
     )
 
+    analyst: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            # Source review + chain reasoning benefits from higher-tier
+            # reasoning. Sonnet primary, Opus fallback so the chain
+            # planner gets a smarter model when rate limits hit.
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
+    reverser: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
+    contract_auditor: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=SONNET,
+            temperature=0.2,
+        )
+    )
+
+    cloud_hunter: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
+    ad_operator: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=OPUS,
+            temperature=0.2,
+        )
+    )
+
     # ── Tactical tier ───────────────────────────────────────────────
     # Tool-heavy, many iterations, speed + cost efficiency matter
 
@@ -147,6 +190,65 @@ class LLMModelMapping(BaseModel):
             primary=SONNET,
             fallback=GPT_4,
             temperature=0.3,
+        )
+    )
+
+    defender: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=HAIKU,
+            temperature=0.2,
+        )
+    )
+
+    # ── Vulnresearch pipeline tier ─────────────────────────────────
+    # Five specialist sub-agents with scale-tuned model assignments.
+
+    vulnresearch: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=GPT_5,
+            temperature=0.4,
+        )
+    )
+
+    scanner: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=HAIKU,
+            fallback=GEMINI_FLASH,
+            temperature=0.2,
+        )
+    )
+
+    detector: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=GPT_4,
+            temperature=0.2,
+        )
+    )
+
+    verifier: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=SONNET,
+            fallback=GPT_4,
+            temperature=0.2,
+        )
+    )
+
+    patcher: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=SONNET,
+            temperature=0.2,
+        )
+    )
+
+    exploiter: ModelAssignment = Field(
+        default_factory=lambda: ModelAssignment(
+            primary=OPUS,
+            fallback=SONNET,
+            temperature=0.2,
         )
     )
 
@@ -195,6 +297,11 @@ class LLMModelMapping(BaseModel):
                     fallback=SONNET,
                     temperature=0.3,
                 ),
+                analyst=ModelAssignment(
+                    primary=OPUS,
+                    fallback=SONNET,
+                    temperature=0.2,
+                ),
                 recon=ModelAssignment(
                     primary=SONNET,
                     fallback=OPUS,
@@ -205,34 +312,33 @@ class LLMModelMapping(BaseModel):
                     fallback=SONNET,
                     temperature=0.3,
                 ),
+                defender=ModelAssignment(
+                    primary=OPUS,
+                    fallback=SONNET,
+                    temperature=0.2,
+                ),
             )
 
         if profile == ModelProfile.TEST:
             return cls(
-                decepticon=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.4,
-                ),
-                planning=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.4,
-                ),
-                soundwave=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.4,
-                ),
-                exploit=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.3,
-                ),
-                recon=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.3,
-                ),
-                postexploit=ModelAssignment(
-                    primary=HAIKU,
-                    temperature=0.3,
-                ),
+                decepticon=ModelAssignment(primary=HAIKU, temperature=0.4),
+                planning=ModelAssignment(primary=HAIKU, temperature=0.4),
+                soundwave=ModelAssignment(primary=HAIKU, temperature=0.4),
+                exploit=ModelAssignment(primary=HAIKU, temperature=0.3),
+                analyst=ModelAssignment(primary=HAIKU, temperature=0.2),
+                reverser=ModelAssignment(primary=HAIKU, temperature=0.2),
+                contract_auditor=ModelAssignment(primary=HAIKU, temperature=0.2),
+                cloud_hunter=ModelAssignment(primary=HAIKU, temperature=0.2),
+                ad_operator=ModelAssignment(primary=HAIKU, temperature=0.2),
+                recon=ModelAssignment(primary=HAIKU, temperature=0.3),
+                postexploit=ModelAssignment(primary=HAIKU, temperature=0.3),
+                defender=ModelAssignment(primary=HAIKU, temperature=0.2),
+                vulnresearch=ModelAssignment(primary=HAIKU, temperature=0.4),
+                scanner=ModelAssignment(primary=HAIKU, temperature=0.2),
+                detector=ModelAssignment(primary=HAIKU, temperature=0.2),
+                verifier=ModelAssignment(primary=HAIKU, temperature=0.2),
+                patcher=ModelAssignment(primary=HAIKU, temperature=0.2),
+                exploiter=ModelAssignment(primary=HAIKU, temperature=0.2),
             )
 
         raise ValueError(f"Unknown profile: {profile}")

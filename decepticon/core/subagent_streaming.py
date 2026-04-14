@@ -263,7 +263,24 @@ class StreamingRunnable:
         self._emit_end(renderer, has_renderer, writer, time.monotonic() - start)
 
         if last_state is None:
-            return self._runnable.invoke(input, config, **kwargs)
+            # stream() yielded zero states. Re-invoking the sub-agent here
+            # would double-execute every tool call (duplicate bash side
+            # effects, duplicate graph writes). Surface the failure as a
+            # synthetic error message on a fresh state so downstream
+            # middleware sees a coherent "subagent ran, produced nothing"
+            # instead of silently re-running the work.
+            log.error("[%s] invoke() stream produced no state — returning error", self._name)
+            return {
+                "messages": [
+                    AIMessage(
+                        content=(
+                            f"Subagent '{self._name}' produced no state from "
+                            "stream(). Aborting rather than re-invoking to "
+                            "avoid duplicate tool side effects."
+                        )
+                    )
+                ]
+            }
 
         return last_state
 
@@ -335,7 +352,22 @@ class StreamingRunnable:
         self._emit_end(renderer, has_renderer, writer, time.monotonic() - start)
 
         if last_state is None:
-            return await self._runnable.ainvoke(input, config, **kwargs)
+            # See the sync invoke() branch above: re-invoking here would
+            # double-execute every tool. Return an explicit error state so
+            # the orchestrator sees "subagent produced nothing" instead of
+            # silently running the whole agent a second time.
+            log.error("[%s] ainvoke() astream produced no state — returning error", self._name)
+            return {
+                "messages": [
+                    AIMessage(
+                        content=(
+                            f"Subagent '{self._name}' produced no state from "
+                            "astream(). Aborting rather than re-invoking to "
+                            "avoid duplicate tool side effects."
+                        )
+                    )
+                ]
+            }
 
         return last_state
 

@@ -24,9 +24,12 @@ on:
       - demo/**
       - .gitignore
 
+permissions:
+  contents: read
+
 jobs:
   python:
-    name: Python (lint + test)
+    name: Python (lint + typecheck + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,20 +41,46 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --dev
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pytest
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: basedpyright (errors only)
+        run: |
+          # Fail on errors only — pre-existing warnings on langchain dynamic
+          # interfaces are tracked but non-blocking. Ratchet up over time.
+          uv run basedpyright --outputjson > /tmp/bp.json || true
+          python3 -c "
+          import json, sys
+          d = json.load(open('/tmp/bp.json'))
+          s = d['summary']
+          print(f\"basedpyright: {s['errorCount']} errors, {s['warningCount']} warnings, {s['informationCount']} info\")
+          sys.exit(1 if s['errorCount'] > 0 else 0)
+          "
+      - name: Pytest with coverage
+        run: uv run pytest --cov --cov-report=xml --cov-report=term --cov-fail-under=30
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
 
   cli:
-    name: CLI (typecheck)
+    name: CLI (typecheck + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: cd clients/cli && npm ci
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
       - run: cd clients/cli && npm run typecheck
+      - name: Run CLI tests
+        run: cd clients/cli && npm test --if-present
 
   docker-build:
     name: Docker build (${{ matrix.image }})
@@ -73,5 +102,49 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: false
+          load: true
+          tags: decepticon-${{ matrix.image }}:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: decepticon-${{ matrix.image }}:ci
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.image }}
+          path: trivy-${{ matrix.image }}.sarif
+          if-no-files-found: ignore
+
+  security:
+    name: Security (pip-audit + gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install pip-audit
+        run: uv tool install pip-audit
+      - name: Export requirements
+        run: uv export --format requirements-txt --no-hashes --no-dev > requirements.txt
+      - name: Run pip-audit
+        run: uv tool run pip-audit --requirement requirements.txt --ignore-vuln GHSA-xxxx-xxxx-xxxx || true
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

@@ -22,8 +22,8 @@ is a critical failure that compromises the engagement.
    lessons learned in every `task()` delegation. Sub-agents start with zero context.
    NEVER use double-nested paths like `/workspace/workspace/<slug>/`.
 5. **State Persistence**: After EVERY sub-agent completion, use `update_objective`
-   to record status. Sub-agents record individual findings to `findings/FIND-{NNN}.md` and
-   append summaries to `findings.md`. Verify findings were recorded after each delegation.
+   to record status. Sub-agents record individual findings to `findings/FIND-{NNN}.md`.
+   Verify findings were recorded after each delegation.
 6. **Kill Chain Order**: ALWAYS check `blocked_by` dependencies via `get_objective`
    before starting any objective. Premature execution wastes context windows.
 7. **OPPLAN Discipline**: ALWAYS call `get_objective` before `update_objective`.
@@ -66,10 +66,14 @@ Prefer tools in this order. Use the most specific tool available:
 
 | Tool | Purpose |
 |------|---------|
-| `add_objective` | Add objective (auto-ID OBJ-NNN, one per context window). Set `engagement_name` and `threat_profile` on first call. |
+| `add_objective` | Add objective (auto-ID OBJ-NNN, one per context window). Set `engagement_name` and `threat_profile` on first call. Pass `parent_id` to nest under an existing objective. |
 | `get_objective` | Read objective details (ALWAYS call before update) |
-| `list_objectives` | All objectives + progress summary |
+| `list_objectives` | All objectives + progress summary. Shows tree view when hierarchy is present. |
 | `update_objective` | Change status, assign owner, add notes (NEVER in parallel) |
+| `objective_expand` | Break a parent into N child sub-tasks (Pentesting Task Tree). Use when an objective is too broad or when discovered work reveals subtasks. Parents cannot COMPLETE until every child is COMPLETED or CANCELLED. |
+| `objective_collapse` | Cancel every descendant of a parent objective (when abandoning a branch). |
+
+**When to expand vs. add_objective**: If you're sketching the initial plan, use `add_objective` for top-level goals. If mid-engagement you realize an objective is broad ("compromise AD") or recon surfaced subtasks ("pivot via SOCKS → re-scan internal subnet → enum SMB"), call `objective_expand(parent_id, children=[...])` instead of leaving it as one flat leaf. Keep leaves small enough to complete in one sub-agent iteration.
 
 ## Context Handoff Template
 
@@ -113,7 +117,7 @@ Repeat until all objectives PASSED or no further progress is possible:
 4. `update_objective(id, status="in-progress", owner="<agent>")` — claim it
 5. `task("<agent>", ...)` — delegate with full context handoff
 6. Evaluate result → `update_objective(id, status="passed/blocked", notes="...")`
-7. Append to `findings.md` and `lessons_learned.md`
+7. Record to `findings/FIND-{NNN}.md` and `lessons_learned.md`
 8. Adapt — if blocked, assess alternatives before moving to next
 
 ## Phase 3: Adaptive Re-planning
@@ -142,7 +146,7 @@ When all objectives are PASSED (or remaining permanently BLOCKED):
 ├── recon/                    — Reconnaissance output
 ├── exploit/                  — Exploitation output
 ├── post-exploit/             — Post-exploitation output
-├── findings.md               — Append-only cross-iteration findings
+├── findings/                  — Per-finding reports (FIND-001.md, ...)
 └── lessons_learned.md        — What worked, what didn't, adaptations
 ```
 

@@ -75,6 +75,7 @@ class ObjectiveStatus(StrEnum):
     IN_PROGRESS = "in-progress"
     COMPLETED = "completed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 class FindingSeverity(StrEnum):
@@ -438,6 +439,15 @@ class Objective(BaseModel):
         default_factory=list, description="Objective IDs that must complete first"
     )
     owner: str = Field(default="", description="Sub-agent currently executing this objective")
+    parent_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional parent objective ID. When set, this objective is a "
+            "sub-task of the parent — the parent cannot move to COMPLETED "
+            "until every child is COMPLETED or CANCELLED. Inspired by "
+            "PentestGPT's Pentesting Task Tree (PTT)."
+        ),
+    )
 
 
 class OPPLAN(BaseModel):
@@ -446,6 +456,11 @@ class OPPLAN(BaseModel):
     Direct analogue of ralph's prd.json. The autonomous loop reads this
     file each iteration, picks the next objective, executes it, and
     updates the status.
+
+    Hierarchical mode: any objective with ``parent_id`` set becomes a
+    child of that parent. Trees are arbitrary depth — but real plans
+    rarely need more than two levels in practice. The flat-list code
+    paths still work when no hierarchy is set.
     """
 
     engagement_name: str
@@ -453,6 +468,74 @@ class OPPLAN(BaseModel):
         description="Short threat actor summary for context injection each iteration"
     )
     objectives: list[Objective] = Field(default_factory=list)
+
+    # ── Hierarchy helpers ──────────────────────────────────────────────
+
+    def by_id(self, objective_id: str) -> Objective | None:
+        for obj in self.objectives:
+            if obj.id == objective_id:
+                return obj
+        return None
+
+    def children_of(self, parent_id: str) -> list[Objective]:
+        """Direct children of ``parent_id`` (single level)."""
+        return [o for o in self.objectives if o.parent_id == parent_id]
+
+    def descendants_of(self, parent_id: str) -> list[Objective]:
+        """Every descendant of ``parent_id`` (depth-first)."""
+        out: list[Objective] = []
+        stack = list(self.children_of(parent_id))
+        while stack:
+            obj = stack.pop()
+            out.append(obj)
+            stack.extend(self.children_of(obj.id))
+        return out
+
+    def root_objectives(self) -> list[Objective]:
+        """Top-level objectives (no parent)."""
+        return [o for o in self.objectives if not o.parent_id]
+
+    def has_hierarchy(self) -> bool:
+        return any(o.parent_id for o in self.objectives)
+
+    def detect_cycle(self, objective_id: str, parent_id: str) -> bool:
+        """Return True if attaching ``objective_id`` under ``parent_id``
+        would create a cycle. Walks the proposed parent chain upward."""
+        if objective_id == parent_id:
+            return True
+        cur = self.by_id(parent_id)
+        seen: set[str] = set()
+        while cur is not None:
+            if cur.id in seen:
+                return True
+            seen.add(cur.id)
+            if cur.id == objective_id:
+                return True
+            if not cur.parent_id:
+                return False
+            cur = self.by_id(cur.parent_id)
+        return False
+
+    def tree(self) -> list[dict[str, object]]:
+        """Return the objective list as a nested ``[{...children: []}]`` dict."""
+
+        def _build(parent_id: str | None) -> list[dict[str, object]]:
+            return [
+                {
+                    "id": o.id,
+                    "title": o.title,
+                    "phase": o.phase.value if hasattr(o.phase, "value") else str(o.phase),
+                    "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+                    "priority": o.priority,
+                    "children": _build(o.id),
+                }
+                for o in sorted(
+                    [x for x in self.objectives if x.parent_id == parent_id],
+                    key=lambda x: x.priority,
+                )
+            ]
+
+        return _build(None)
 
 
 # ── Engagement Bundle ─────────────────────────────────────────────────
@@ -475,8 +558,7 @@ class EngagementBundle(BaseModel):
 
         Layout:
           <engagement_dir>/plan/roe.json, conops.json, opplan.json, deconfliction.json
-          <engagement_dir>/findings.md          (append-only cross-iteration summary)
-          <engagement_dir>/findings/             (per-finding JSON files)
+          <engagement_dir>/findings/             (per-finding reports: FIND-001.md, ...)
           <engagement_dir>/findings/attack-paths/ (attack path JSON files)
           <engagement_dir>/findings/evidence/    (evidence artifacts)
           <engagement_dir>/timeline.jsonl        (activity timeline)
@@ -518,16 +600,18 @@ class EngagementBundle(BaseModel):
             )
             files[name] = str(path)
 
-        # Initialize empty findings.md
-        findings_path = root / "findings.md"
-        if not findings_path.exists():
-            findings_path.write_text(
-                f"# Findings Log — {self.roe.engagement_name}\n\n"
+        # Initialize findings directory README (replaces legacy findings.md)
+        findings_readme = root / "findings" / "README.md"
+        if not findings_readme.exists():
+            findings_readme.write_text(
+                f"# Findings — {self.roe.engagement_name}\n\n"
                 f"Started: {datetime.now().isoformat()}\n\n"
-                "---\n\n",
+                "Each finding is a separate file: `FIND-001.md`, `FIND-002.md`, ...\n"
+                "Attack paths: `attack-paths/PATH-001.md`, ...\n"
+                "Evidence artifacts: `evidence/`\n",
                 encoding="utf-8",
             )
-            files["findings"] = str(findings_path)
+            files["findings"] = str(root / "findings")
 
         # Initialize empty timeline.jsonl (activity log)
         timeline_path = root / "timeline.jsonl"

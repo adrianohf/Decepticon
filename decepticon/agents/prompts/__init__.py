@@ -128,8 +128,16 @@ def _get_tool_prompt(tool_name: str, role: str | None = None) -> str:
 # ── Roles that get cross-cutting prompt patterns ─────────────────────────────
 # The orchestrator (decepticon) and planner don't do direct tool execution,
 # so they get a subset of the patterns.
-_OPERATIONAL_ROLES = {"recon", "exploit", "postexploit"}
-_ALL_ROLES = {"recon", "exploit", "postexploit", "decepticon", "planner", "soundwave"}
+_OPERATIONAL_ROLES = {
+    "recon",
+    "exploit",
+    "postexploit",
+    "analyst",
+    "reverser",
+    "contract_auditor",
+    "cloud_hunter",
+    "ad_operator",
+}
 
 
 class PromptBuilder:

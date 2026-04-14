@@ -8,6 +8,7 @@ For development with hot-reload, use `make dev` + `make cli` instead.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -21,6 +22,9 @@ GREEN = "\033[0;32m"
 RED = "\033[0;31m"
 BOLD = "\033[1m"
 NC = "\033[0m"
+
+# Default LangGraph port when neither env nor .env pins one.
+_DEFAULT_LANGGRAPH_PORT = 2024
 
 
 def _find_project_root() -> Path:
@@ -45,10 +49,60 @@ def _compose(root: Path) -> list[str]:
     return cmd
 
 
-def _wait_for_server(port: int = 2024, timeout: int = 90) -> bool:
-    """Block until LangGraph server is ready."""
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Minimal .env parser: ``KEY=VALUE`` lines, ``#`` comments, no shell."""
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return values
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key:
+            values[key] = val
+    return values
+
+
+def _resolve_env(root: Path) -> tuple[int, Path]:
+    """Resolve runtime config from (os.environ ∪ .env).
+
+    Precedence ``os.environ`` > ``.env`` > hardcoded default, matching
+    ``docker compose --env-file``. Returns ``(port, home)``:
+
+    - ``port``: LangGraph API port to poll, honoring ``LANGGRAPH_PORT``.
+    - ``home``: Absolute path used for ``DECEPTICON_HOME``. Tilde is
+      expanded here because Docker Compose cannot expand ``~`` on its
+      own (see .env.example), and the compose file's default
+      ``${DECEPTICON_HOME:-~/.decepticon}`` would otherwise create a
+      literal ``~`` directory on the host.
+    """
+    env_file = _parse_env_file(root / ".env")
+
+    port_raw = os.environ.get("LANGGRAPH_PORT") or env_file.get("LANGGRAPH_PORT")
+    try:
+        port = int(port_raw) if port_raw else _DEFAULT_LANGGRAPH_PORT
+    except ValueError:
+        print(f"{RED}Invalid LANGGRAPH_PORT: {port_raw!r}{NC}")
+        sys.exit(2)
+
+    home_raw = (
+        os.environ.get("DECEPTICON_HOME") or env_file.get("DECEPTICON_HOME") or "~/.decepticon"
+    )
+    home = Path(home_raw).expanduser().resolve()
+    return port, home
+
+
+def _wait_for_server(port: int, timeout: int = 90) -> bool:
+    """Block until LangGraph server is ready on ``port``."""
     waited = 0
-    print(f"{DIM}Waiting for LangGraph server", end="", flush=True)
+    print(f"{DIM}Waiting for LangGraph server on :{port}", end="", flush=True)
     while waited < timeout:
         try:
             req = urllib.request.Request(
@@ -73,15 +127,34 @@ def main() -> None:
     """Start services and open CLI — identical to production."""
     root = _find_project_root()
     compose = _compose(root)
+    port, home = _resolve_env(root)
 
-    print(f"{DIM}Building and starting services...{NC}")
-    subprocess.run([*compose, "up", "-d", "--build"], capture_output=True)
+    # Propagate the expanded DECEPTICON_HOME into the compose subprocess
+    # so the sandbox workspace bind mount (docker-compose.yml:69) resolves
+    # to an absolute path rather than a literal ``~``.
+    home.mkdir(parents=True, exist_ok=True)
+    child_env = {**os.environ, "DECEPTICON_HOME": str(home)}
 
-    if not _wait_for_server():
+    print(f"{DIM}Building and starting services (DECEPTICON_HOME={home}, port={port})...{NC}")
+    # Do NOT swallow stdout/stderr — build + pull errors should stream
+    # live so a failure is visible immediately rather than masquerading
+    # as a "Server failed to start within 90s" timeout later.
+    result = subprocess.run(
+        [*compose, "up", "-d", "--build"],
+        env=child_env,
+    )
+    if result.returncode != 0:
+        print(
+            f"{RED}docker compose up failed (exit {result.returncode}).{NC} "
+            f"{DIM}See the output above for the build/pull error.{NC}"
+        )
+        sys.exit(result.returncode)
+
+    if not _wait_for_server(port=port):
         print(f"{DIM}Check logs: {BOLD}make logs{NC}")
         sys.exit(1)
 
-    subprocess.run([*compose, "--profile", "cli", "run", "--rm", "cli"])
+    subprocess.run([*compose, "--profile", "cli", "run", "--rm", "cli"], env=child_env)
 
 
 if __name__ == "__main__":
