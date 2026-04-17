@@ -1,25 +1,26 @@
 # ── Stage 1: Build ────────────────────────────────────────────────
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 
 # Copy workspace root (lock file) + cli package.json for dependency install
 COPY package.json package-lock.json ./
 COPY clients/cli/package.json clients/cli/
+COPY clients/shared/streaming/package.json clients/shared/streaming/
 RUN npm ci --workspace=@decepticon/cli
 
-# Copy CLI source and build
+# Copy CLI and shared source and build
+COPY clients/shared/ clients/shared/
 COPY clients/cli/ clients/cli/
 RUN npm run build --workspace=@decepticon/cli
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────
-FROM node:22-slim
+FROM node:24-slim
 WORKDIR /app
 
 # Copy compiled output + runtime dependencies
 COPY --from=builder /app/clients/cli/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/clients/cli/dist ./dist
-# Keep src/ for tsx runtime (index.tsx shebang entry)
+# tsx runs src/ directly — dist/ is not used at runtime
 COPY --from=builder /app/clients/cli/src ./src
 
 ENV DECEPTICON_API_URL=http://langgraph:2024

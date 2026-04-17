@@ -9,8 +9,9 @@
 
 COMPOSE := docker compose
 COMPOSE_CLI := $(COMPOSE) --profile cli
+COMPOSE_WEB := $(COMPOSE) --profile web
 
-.PHONY: dev start cli stop status logs kg-health neo4j-health build test test-cli lint lint-cli quality clean
+.PHONY: dev start cli cli-dev web web-dev web-db-ensure web-build web-lint web-migrate web-ee web-oss stop status logs kg-health neo4j-health build test test-cli lint lint-cli quality clean
 
 # ── Development ──────────────────────────────────────────────────
 
@@ -18,9 +19,13 @@ COMPOSE_CLI := $(COMPOSE) --profile cli
 dev:
 	$(COMPOSE) watch
 
-## Run interactive CLI (use in a separate terminal while `make dev` is running)
+## Run interactive CLI in Docker (prod-like, requires `make dev` for backend)
 cli:
 	$(COMPOSE_CLI) run --rm cli
+
+## Run interactive CLI locally (dev mode with hot-reload, reflects source changes instantly)
+cli-dev:
+	DECEPTICON_API_URL=$${DECEPTICON_API_URL:-http://localhost:2024} npm run cli:dev
 
 # ── Production-like ──────────────────────────────────────────────
 
@@ -30,7 +35,7 @@ start:
 
 ## Stop all services
 stop:
-	$(COMPOSE) --profile cli --profile victims down
+	$(COMPOSE) --profile cli --profile web --profile victims --profile c2-sliver down
 
 ## Show service status
 status:
@@ -52,7 +57,7 @@ logs:
 
 ## Build all Docker images without starting
 build:
-	$(COMPOSE_CLI) build
+	$(COMPOSE) --profile cli --profile web build
 
 ## Build a specific service (usage: make build-svc SVC=langgraph)
 build-svc:
@@ -96,9 +101,61 @@ test-cli:
 ## Python lint + Python tests + CLI typecheck + CLI build + CLI tests.
 ## Run this before opening a PR so a CLI-workspace break cannot slip
 ## through the way it did prior to the HIGH-1 finding.
-quality: lint test-local lint-cli build-cli test-cli
+quality: lint test-local lint-cli build-cli test-cli web-lint web-build
 	@echo ""
-	@echo "OK — all quality gates passed (python + cli)"
+	@echo "OK — all quality gates passed (python + cli + web)"
+
+# ── Web Dashboard ───────────────────────────────────────────────
+
+## Start web dashboard (Docker, includes PostgreSQL + Neo4j)
+web:
+	$(COMPOSE_WEB) up -d --build web
+
+## Start web dashboard in dev mode (local Next.js, requires running PostgreSQL)
+## Auto-ensures decepticon_web DB exists + applies migrations before starting.
+web-dev: web-db-ensure
+	cd clients/web && npm run dev
+
+## Ensure decepticon_web DB exists, schema is migrated, and OSS seed user exists.
+## Idempotent — safe to run multiple times.
+web-db-ensure:
+	@docker exec decepticon-postgres psql -U decepticon -d postgres -tAc \
+		"SELECT 1 FROM pg_database WHERE datname='decepticon_web'" 2>/dev/null | grep -q 1 \
+		|| docker exec decepticon-postgres psql -U decepticon -d postgres -c "CREATE DATABASE decepticon_web;" >/dev/null
+	@cd clients/web && npx prisma migrate deploy 2>&1 | tail -1
+	@docker exec decepticon-postgres psql -U decepticon -d decepticon_web -tAc \
+		"INSERT INTO \"User\" (id, \"updatedAt\") VALUES ('local', NOW()) ON CONFLICT (id) DO NOTHING;" >/dev/null
+
+## Build web dashboard (generates Prisma client first)
+web-build: web-generate
+	cd clients/web && npm run build
+
+## Lint web dashboard
+web-lint:
+	cd clients/web && npx eslint src/ --max-warnings 0
+
+## Run Prisma migration for web dashboard (usage: make web-migrate or make web-migrate NAME=add_fields)
+web-migrate:
+	cd clients/web && npx prisma migrate dev --name $(or $(NAME),init)
+
+## Generate Prisma client
+web-generate:
+	cd clients/web && npx prisma generate
+
+## Link EE package for SaaS development
+web-ee:
+	cd clients/ee && npm link
+	cd clients/web && npm link @decepticon/ee
+	@grep -q 'NEXT_PUBLIC_DECEPTICON_EDITION' clients/web/.env 2>/dev/null \
+		&& sed -i 's/NEXT_PUBLIC_DECEPTICON_EDITION=.*/NEXT_PUBLIC_DECEPTICON_EDITION=ee/' clients/web/.env \
+		|| echo 'NEXT_PUBLIC_DECEPTICON_EDITION=ee' >> clients/web/.env
+	@echo "EE linked — restart web-dev for SaaS mode"
+
+## Unlink EE package (switch to OSS mode)
+web-oss:
+	cd clients/web && npm unlink @decepticon/ee 2>/dev/null; true
+	@sed -i '/NEXT_PUBLIC_DECEPTICON_EDITION/d' clients/web/.env 2>/dev/null; true
+	@echo "EE unlinked — restart web-dev for OSS mode"
 
 # ── Victim Targets (demo/testing) ───────────────────────────────
 
@@ -117,7 +174,7 @@ demo:
 
 ## Stop services and remove volumes
 clean:
-	$(COMPOSE) --profile cli --profile victims down --volumes --remove-orphans
+	$(COMPOSE) --profile cli --profile web --profile victims down --volumes --remove-orphans
 
 # ── Help ─────────────────────────────────────────────────────────
 
@@ -127,7 +184,8 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make dev        Build + start with hot-reload (docker compose watch)"
-	@echo "  make cli        Run interactive CLI (separate terminal)"
+	@echo "  make cli        Run interactive CLI in Docker (prod-like)"
+	@echo "  make cli-dev    Run interactive CLI locally (dev mode, hot-reload)"
 	@echo ""
 	@echo "Production-like:"
 	@echo "  make start      Build + start in background"
@@ -147,6 +205,16 @@ help:
 	@echo "  make lint-cli    Typecheck the Ink CLI workspace"
 	@echo "  make build-cli   Build the Ink CLI workspace"
 	@echo "  make test-cli    Run vitest in the CLI workspace"
+	@echo ""
+	@echo "Web Dashboard:"
+	@echo "  make web          Start web dashboard (Docker, includes PG + Neo4j)"
+	@echo "  make web-dev      Local Next.js dev server"
+	@echo "  make web-build    Build web dashboard"
+	@echo "  make web-lint     Lint web (ESLint)"
+	@echo "  make web-migrate  Run Prisma DB migration"
+	@echo "  make web-generate Generate Prisma client"
+	@echo "  make web-ee       Link EE package (SaaS mode)"
+	@echo "  make web-oss      Unlink EE package (OSS mode)"
 	@echo ""
 	@echo "Combined:"
 	@echo "  make quality     Python + CLI — run before every PR"
