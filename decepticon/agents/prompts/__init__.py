@@ -263,4 +263,16 @@ def load_prompt(name: str, *, shared: list[str] | None = None) -> str:
     tool_prompts = [s for s in shared if s == "bash"]
     fragments = [s for s in shared if s != "bash"]
 
-    return PromptBuilder(name).with_tool_prompts(tool_prompts).with_shared(fragments).build()
+    prompt = PromptBuilder(name).with_tool_prompts(tool_prompts).with_shared(fragments).build()
+
+    # Apply Claude 4.x compatibility shim (no-op for other model families).
+    # See decepticon/agents/prompts/claude4_compat.py and docs/model-compatibility.md.
+    try:
+        from decepticon.agents.prompts.claude4_compat import apply_compat_for_role
+
+        prompt = apply_compat_for_role(prompt, name)
+    except Exception:
+        # Fail soft: never break prompt loading because of the compat shim.
+        pass
+
+    return prompt
