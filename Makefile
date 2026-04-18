@@ -10,7 +10,7 @@
 COMPOSE := docker compose
 COMPOSE_CLI := $(COMPOSE) --profile cli
 
-.PHONY: dev start cli cli-dev web web-dev web-db-ensure web-build web-lint web-migrate web-ee web-oss stop status logs kg-health neo4j-health build test test-cli lint lint-cli quality clean
+.PHONY: dev start cli cli-dev web web-dev web-db-ensure web-build web-lint web-migrate web-generate web-install web-ee web-oss node-install stop status logs kg-health neo4j-health build test test-cli lint lint-cli build-cli quality clean
 
 # ── Development ──────────────────────────────────────────────────
 
@@ -83,17 +83,22 @@ lint-fix:
 	uv run ruff check --fix .
 	uv run ruff format .
 
+## Install npm workspace dependencies if node_modules is absent (clean clone / worktree).
+## npm install is idempotent; it exits quickly when nothing has changed.
+node-install:
+	@test -d node_modules || npm install
+
 ## CLI (TypeScript) quality gates — mirror the CI workflow so local
 ## runs catch CLI breakage before push. These three targets are what
 ## unblocked the HIGH-1 finding: build + typecheck + vitest all exist
 ## in the CLI workspace but the default `make lint` never ran them.
-lint-cli:
+lint-cli: node-install
 	npm run typecheck --workspace=@decepticon/cli
 
-build-cli:
+build-cli: node-install
 	npm run build --workspace=@decepticon/cli
 
-test-cli:
+test-cli: node-install
 	npm run test --workspace=@decepticon/cli
 
 ## Single command that exercises EVERY quality gate locally —
@@ -125,20 +130,24 @@ web-db-ensure:
 	@docker exec decepticon-postgres psql -U decepticon -d decepticon_web -tAc \
 		"INSERT INTO \"User\" (id, \"updatedAt\") VALUES ('local', NOW()) ON CONFLICT (id) DO NOTHING;" >/dev/null
 
+## Install web dashboard npm dependencies if absent (clean clone / worktree).
+web-install:
+	@test -d clients/web/node_modules || npm install --prefix clients/web
+
 ## Build web dashboard (generates Prisma client first)
 web-build: web-generate
 	cd clients/web && npm run build
 
 ## Lint web dashboard
-web-lint:
+web-lint: web-install
 	cd clients/web && npx eslint src/ --max-warnings 0
 
 ## Run Prisma migration for web dashboard (usage: make web-migrate or make web-migrate NAME=add_fields)
-web-migrate:
+web-migrate: web-install
 	cd clients/web && npx prisma migrate dev --name $(or $(NAME),init)
 
 ## Generate Prisma client
-web-generate:
+web-generate: web-install
 	cd clients/web && npx prisma generate
 
 ## Link EE package for SaaS development
