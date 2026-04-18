@@ -20,6 +20,9 @@ WORKDIR /app
 # Copy compiled output + runtime dependencies
 COPY --from=builder /app/clients/cli/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
+# Shared workspace packages are symlinked from node_modules — copy the
+# actual source so the symlinks resolve at runtime.
+COPY --from=builder /app/clients/shared ./clients/shared
 # tsx runs src/ directly — dist/ is not used at runtime
 COPY --from=builder /app/clients/cli/src ./src
 
