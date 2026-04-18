@@ -32,7 +32,29 @@ WORKDIR /app/clients/web
 # Explicit OSS edition — proxy.ts + hasEE() check this env var.
 # EE builds override via --build-arg or separate Dockerfile.
 ENV NEXT_PUBLIC_DECEPTICON_EDITION=oss
-RUN npm run build
+# Turbopack aliases @prisma/client as @prisma/client-<schema-hash> in server chunks
+# (external module, not bundled). Copy @prisma/client under that alias so the
+# standalone server can resolve it at runtime. Hash is extracted from build output.
+RUN npm run build && \
+    # Turbopack aliases external packages as <name>-<16hexchars> in server chunks.
+    # Standalone build omits these aliases. Find every alias, derive the original
+    # package name, and copy it into standalone/node_modules under the alias.
+    grep -roh '"[^"]*-[a-f0-9]\{16\}[^"]*"' .next/server/chunks/ 2>/dev/null \
+        | tr -d '"' \
+        | grep -oE '^(@[^/]+/[^/]+-[a-f0-9]{16,}|[^@/][^/]+-[a-f0-9]{16,})' \
+        | sort -u \
+        | while read alias; do \
+            pkg=$(echo "$alias" | sed -E 's/-[a-f0-9]{16,}$//'); \
+            dst=".next/standalone/node_modules/$alias"; \
+            [ -d "$dst" ] && continue; \
+            for base in ".next/standalone/node_modules" "../../node_modules"; do \
+                if [ -d "$base/$pkg" ]; then \
+                    echo "Turbopack alias: $alias <- $pkg"; \
+                    cp -r "$base/$pkg/." "$dst/"; \
+                    break; \
+                fi; \
+            done; \
+        done
 
 # Production image
 FROM base AS runner

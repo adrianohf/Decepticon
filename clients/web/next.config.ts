@@ -12,9 +12,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(process.cwd(), "..", ".."),
   },
-  // @decepticon/ee is an optional private package — tell the bundler to skip it
-  // and leave resolution to Node.js at runtime (where try/catch handles absence).
-  serverExternalPackages: ["@decepticon/ee"],
+  // Packages that must NOT be bundled — left as external Node.js requires.
+  // @prisma/client + pg: Turbopack otherwise aliases them with content hashes
+  // (e.g. @prisma/client-2c3a…) which the standalone build can't resolve at runtime.
+  // @decepticon/ee: optional private package, absence handled via try/catch.
+  serverExternalPackages: ["@prisma/client", "pg", "@decepticon/ee"],
   // Proxy LangGraph SDK requests to the LangGraph server (avoids CORS,
   // enables direct SDK streaming from the browser).
   async rewrites() {
