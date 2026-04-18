@@ -104,7 +104,7 @@ function sdkMessagesToChatMessages(messages: Message[]): ChatMessage[] {
 
 // ── Hook ────────────────────────────────────────────────────────
 
-export function useChat({ engagementId: _engagementId, assistantId = "soundwave" }: UseChatOptions): UseChatReturn {
+export function useChat({ assistantId = "soundwave" }: UseChatOptions): UseChatReturn {
   // Track custom events (sub-agent activity) in state so changes trigger re-renders
   const [customEvents, setCustomEvents] = useState<ChatMessage[]>([]);
 

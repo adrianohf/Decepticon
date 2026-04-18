@@ -6,15 +6,6 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileWarning, Network, Play, ArrowRight, ClipboardList, Loader2 } from "lucide-react";
 
-interface EngagementDetail {
-  id: string;
-  name: string;
-  targetType: string;
-  targetValue: string;
-  status: string;
-  workspacePath: string | null;
-}
-
 const quickStats = [
   {
     label: "Objectives",

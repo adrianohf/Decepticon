@@ -27,10 +27,8 @@ export function useAgents(): UseAgentsReturn {
     if (fetched.current) return;
     fetched.current = true;
 
-    // Skip fetch if cache is fresh
+    // Skip fetch if cache is fresh (isLoading already false when cachedAgents is set)
     if (cachedAgents && Date.now() - cacheTime < CACHE_TTL) {
-      setAgents(cachedAgents);
-      setIsLoading(false);
       return;
     }
 
