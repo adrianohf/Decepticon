@@ -110,12 +110,26 @@ quality: lint test-local quality-cli web-lint web-build
 web:
 	$(COMPOSE) up -d --build web
 
-## Start web dashboard in dev mode (local Next.js, requires running PostgreSQL)
-web-dev: web-db-ensure
+## Start web dashboard in dev mode (Next.js + terminal WebSocket server)
+## Automatically starts infra services (postgres, neo4j, etc.) if not running.
+web-dev: web-infra web-db-ensure
+	@echo "[web-dev] Starting terminal server (ws://localhost:3003)..."
+	@cd clients/web && npx tsx server/terminal-server.ts &
+	@echo "[web-dev] Starting Next.js dev server (http://localhost:3000)..."
 	cd clients/web && npm run dev
+
+# Internal: start infra services needed by web (skip web container itself)
+web-infra:
+	@echo "[web-infra] Ensuring backend services are running..."
+	@$(COMPOSE) up -d postgres neo4j litellm langgraph sandbox
 
 # Internal: ensure decepticon_web DB exists and migrations are applied
 web-db-ensure:
+	@echo "[web-db-ensure] Waiting for PostgreSQL..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		docker exec decepticon-postgres pg_isready -U decepticon -q 2>/dev/null && break; \
+		sleep 1; \
+	done
 	@docker exec decepticon-postgres psql -U decepticon -d postgres -tAc \
 		"SELECT 1 FROM pg_database WHERE datname='decepticon_web'" 2>/dev/null | grep -q 1 \
 		|| docker exec decepticon-postgres psql -U decepticon -d postgres -c "CREATE DATABASE decepticon_web;" >/dev/null
