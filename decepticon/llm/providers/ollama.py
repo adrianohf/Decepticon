@@ -1,6 +1,8 @@
 """Ollama local LLM auto-detection."""
 from __future__ import annotations
+
 import httpx
+
 from decepticon.core.logging import get_logger
 
 log = get_logger("llm.providers.ollama")

@@ -12,10 +12,10 @@ Reference: .omc/research/codex-oauth.md
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import base64
-import secrets
+import hashlib
 import os
+import secrets
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
