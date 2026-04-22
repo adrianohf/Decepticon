@@ -67,17 +67,17 @@ model_list:
       api_key: os.environ/MINIMAX_API_KEY
 
   # ── Claude Code Auth (OAuth subscription) ────────────────────────────
-  - model_name: claude-code-auth/claude-opus-4-6
+  - model_name: auth/claude-opus-4-6
     litellm_params:
-      model: claude-code-auth/claude-opus-4-6
+      model: auth/claude-opus-4-6
 
-  - model_name: claude-code-auth/claude-sonnet-4-6
+  - model_name: auth/claude-sonnet-4-6
     litellm_params:
-      model: claude-code-auth/claude-sonnet-4-6
+      model: auth/claude-sonnet-4-6
 
-  - model_name: claude-code-auth/claude-haiku-4-5
+  - model_name: auth/claude-haiku-4-5
     litellm_params:
-      model: claude-code-auth/claude-haiku-4-5
+      model: auth/claude-haiku-4-5
 
   # ── Local LLM (Ollama) ──────────────────────────────────────────────
   - model_name: ollama/llama3.2
@@ -88,7 +88,7 @@ model_list:
 # --- LiteLLM Settings ---
 litellm_settings:
   custom_provider_map:
-    - provider: "claude-code-auth"
+    - provider: "auth"
       custom_handler: claude_code_handler.claude_code_handler_instance
 
 # --- Router Settings ---

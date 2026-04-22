@@ -1,13 +1,28 @@
 """LLM model definitions — per-role model assignments with profile-based presets.
 
-Each agent role gets a primary model and optional fallback. Three profiles
-control the cost/performance tradeoff:
+Two orthogonal axes control model selection:
 
+  Profile  — which model tier to use (cost/performance tradeoff)
+  Provider — how to authenticate (api key vs OAuth subscription)
+
+Profiles:
   eco  — Balanced Anthropic-first ensemble (production engagements)
   max  — Maximum performance, Opus everywhere (high-value targets)
   test — Haiku-only, cheapest possible (development and CI)
 
-Profile selection: DECEPTICON_MODEL_PROFILE=max (env var) or config.
+Providers:
+  api  — API keys (x-api-key header), standard LiteLLM routing
+  auth — Claude Code OAuth subscription (Bearer token), no API cost
+
+Usage:
+  mapping = LLMModelMapping.from_profile("eco").with_provider("auth")
+
+  DECEPTICON_MODEL_PROFILE=eco   (env var, default: eco)
+  DECEPTICON_MODEL_PROVIDER=auth (env var, default: api)
+
+With provider=auth, all anthropic/* primary models are automatically
+remapped to auth/* so they route through the OAuth handler.
+Fallbacks stay on the api provider as a paid safety net.
 
 Profiles (April 2026):
 
@@ -40,11 +55,21 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ModelProfile(StrEnum):
-    """Model cost/performance profile."""
+    """Model cost/performance profile (tier)."""
 
     ECO = "eco"
     MAX = "max"
     TEST = "test"
+
+
+class ModelProvider(StrEnum):
+    """Authentication provider for LLM requests.
+
+    api  — API keys via x-api-key header (default)
+    auth — Claude Code OAuth subscription via Bearer token, no API cost
+    """
+
+    API = "api"
     AUTH = "auth"
 
 
@@ -58,11 +83,6 @@ GEMINI_FLASH = "gemini/gemini-2.5-flash"
 MINIMAX = "minimax/MiniMax-M2.7"
 MINIMAX_HIGHSPEED = "minimax/MiniMax-M2.7-highspeed"
 OLLAMA_LOCAL = "ollama/llama3.2"
-CLAUDE_CODE_AUTH_OPUS = "claude-code-auth/claude-opus-4-6"
-CLAUDE_CODE_AUTH_SONNET = "claude-code-auth/claude-sonnet-4-6"
-CLAUDE_CODE_AUTH_HAIKU = "claude-code-auth/claude-haiku-4-5"
-CODEX_AUTH_GPT5 = "codex-auth/gpt-5.4"
-CODEX_AUTH_GPT4 = "codex-auth/gpt-4.1"
 
 
 class ProxyConfig(BaseModel):
@@ -334,94 +354,38 @@ class LLMModelMapping(BaseModel):
                 exploiter=ModelAssignment(primary=HAIKU, temperature=0.2),
             )
 
-        if profile == ModelProfile.AUTH:
-            # Auth profile: subscription-based primary (free) → API-key fallback (paid)
-            return cls(
-                decepticon=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_OPUS,
-                    fallback=OPUS,
-                    temperature=0.4,
-                ),
-                soundwave=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.4,
-                ),
-                exploit=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.3,
-                ),
-                analyst=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                reverser=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                contract_auditor=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                cloud_hunter=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                ad_operator=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                recon=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.3,
-                ),
-                postexploit=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.3,
-                ),
-                defender=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                vulnresearch=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.4,
-                ),
-                scanner=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                detector=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                verifier=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                patcher=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
-                exploiter=ModelAssignment(
-                    primary=CLAUDE_CODE_AUTH_HAIKU,
-                    fallback=HAIKU,
-                    temperature=0.2,
-                ),
+        raise ValueError(f"Unknown profile: {profile}")  # type: ignore[unreachable]
+
+    def with_provider(self, provider: ModelProvider | str) -> "LLMModelMapping":
+        """Return a new mapping with primary models remapped for the given provider.
+
+        ModelProvider.AUTH  — remap ``anthropic/*`` primaries to ``auth/*``
+                              so they route through the Claude Code OAuth handler.
+                              Fallbacks are kept on the API provider as a paid
+                              safety net when the subscription hits limits.
+        ModelProvider.API   — no-op, returns self unchanged.
+
+        Only ``anthropic/`` primaries are remapped; GPT/Gemini/etc. are left as-is.
+        """
+        provider = ModelProvider(provider)
+        if provider == ModelProvider.API:
+            return self
+
+        def _remap(assignment: ModelAssignment) -> ModelAssignment:
+            primary = assignment.primary
+            if primary.startswith("anthropic/"):
+                model_id = primary.split("/", 1)[1]
+                primary = f"auth/{model_id}"
+            return ModelAssignment(
+                primary=primary,
+                fallback=assignment.fallback,
+                temperature=assignment.temperature,
+                max_tokens=assignment.max_tokens,
             )
 
-        raise ValueError(f"Unknown profile: {profile}")
+        return self.model_copy(
+            update={
+                field: _remap(getattr(self, field))
+                for field in self.__class__.model_fields
+            }
+        )

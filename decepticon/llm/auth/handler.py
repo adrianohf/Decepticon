@@ -7,7 +7,7 @@ self-contained or uses only stdlib + xxhash + httpx.
 Registration in litellm.yaml:
   litellm_settings:
     custom_provider_map:
-      - provider: "claude-code-auth"
+      - provider: "auth"
         custom_handler: claude_code_handler.ClaudeCodeCustomHandler
 """
 from __future__ import annotations
@@ -141,8 +141,8 @@ def get_access_token() -> str:
     if tokens is None:
         raise litellm.AuthenticationError(
             message="No Claude Code OAuth tokens found. Run 'decepticon onboard' to authenticate.",
-            model="claude-code-auth",
-            llm_provider="claude-code-auth",
+            model="auth",
+            llm_provider="auth",
         )
 
     if _is_expired(tokens):
@@ -230,7 +230,7 @@ def _get_attribution_header(fingerprint: str) -> str:
 class ClaudeCodeCustomHandler(CustomLLM):
     """LiteLLM custom handler that routes requests through Claude Code OAuth.
 
-    Model names: claude-code-auth/claude-opus-4-6, claude-code-auth/claude-sonnet-4-6, etc.
+    Model names: auth/claude-opus-4-6, auth/claude-sonnet-4-6, etc.
     The part after the ``/`` maps to the actual Anthropic model ID.
     """
 
@@ -261,7 +261,7 @@ class ClaudeCodeCustomHandler(CustomLLM):
         access_token = get_access_token()
 
         # Extract actual Anthropic model ID
-        # "claude-code-auth/claude-sonnet-4-6" -> "claude-sonnet-4-6"
+        # "auth/claude-sonnet-4-6" -> "claude-sonnet-4-6"
         actual_model = model.split("/", 1)[-1] if "/" in model else model
 
         # Extract first user message text for fingerprint computation
@@ -449,7 +449,7 @@ class ClaudeCodeCustomHandler(CustomLLM):
                 status_code=resp.status_code,
                 message=f"Anthropic API error: {resp.text}",
                 model=model,
-                llm_provider="claude-code-auth",
+                llm_provider="auth",
             )
 
         data = resp.json()

@@ -68,11 +68,11 @@ class LLMFactory:
 
     @staticmethod
     def _resolve_profile_mapping() -> LLMModelMapping:
-        """Resolve model mapping from config's model_profile setting."""
+        """Resolve model mapping from config's model_profile + model_provider settings."""
         from decepticon.core.config import load_config
 
         config = load_config()
-        return LLMModelMapping.from_profile(config.model_profile)
+        return LLMModelMapping.from_profile(config.model_profile).with_provider(config.model_provider)
 
     @property
     def proxy_url(self) -> str:

@@ -17,7 +17,7 @@ import litellm  # noqa: E402
 from claude_code_handler import claude_code_handler_instance  # noqa: E402
 
 litellm.custom_provider_map = [
-    {"provider": "claude-code-auth", "custom_handler": claude_code_handler_instance},
+    {"provider": "auth", "custom_handler": claude_code_handler_instance},
 ]
 
 # Run custom_llm_setup to wire up the provider routing
@@ -25,7 +25,7 @@ from litellm.utils import custom_llm_setup  # noqa: E402
 
 custom_llm_setup()
 
-print("[decepticon] claude-code-auth handler registered", flush=True)
+print("[decepticon] auth handler registered", flush=True)
 
 # Start LiteLLM server with remaining CLI args
 # run_server() uses Click which reads sys.argv

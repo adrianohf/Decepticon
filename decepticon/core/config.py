@@ -11,7 +11,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
-from decepticon.llm.models import ModelProfile
+from decepticon.llm.models import ModelProfile, ModelProvider
 
 
 def _project_root() -> Path:
@@ -68,12 +68,17 @@ class DecepticonConfig(BaseSettings):
       eco  — Balanced Anthropic-first (production)
       max  — Opus everywhere (high-value targets)
       test — Haiku-only (development/CI, $1/$5 per MTok)
+
+    Set DECEPTICON_MODEL_PROVIDER to control authentication:
+      api  — API keys via x-api-key header (default)
+      auth — Claude Code OAuth subscription, no API cost
     """
 
     model_config = {"env_prefix": "DECEPTICON_", "env_nested_delimiter": "__"}
 
     debug: bool = False
     model_profile: ModelProfile = ModelProfile.ECO
+    model_provider: ModelProvider = ModelProvider.API
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
 
