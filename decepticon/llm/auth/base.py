@@ -4,6 +4,7 @@ All OAuth providers (Claude Code, Codex) implement this interface.
 The clean separation allows usage from both LiteLLM custom handlers
 and potential future direct BaseChatModel subclasses.
 """
+
 from __future__ import annotations
 
 import abc
@@ -88,6 +89,7 @@ class BaseOAuthProvider(abc.ABC):
             data = resp.json()
 
         import time
+
         return OAuthTokens(
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token", tokens.refresh_token),

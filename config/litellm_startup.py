@@ -7,6 +7,7 @@ This script registers handlers explicitly at module import time.
 Usage in docker-compose.yml:
   command: ["python", "/app/litellm_startup.py", "--config", "/app/config.yaml", "--port", "4000"]
 """
+
 from __future__ import annotations
 
 import sys

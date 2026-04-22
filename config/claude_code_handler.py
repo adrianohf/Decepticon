@@ -10,6 +10,7 @@ Registration in litellm.yaml:
       - provider: "auth"
         custom_handler: claude_code_handler.ClaudeCodeCustomHandler
 """
+
 from __future__ import annotations
 
 import json
@@ -189,8 +190,6 @@ def _build_headers(access_token: str) -> dict[str, str]:
     return headers
 
 
-
-
 # ── Custom LLM Handler ──────────────────────────────────────────────
 
 
@@ -255,31 +254,38 @@ class ClaudeCodeCustomHandler(CustomLLM):
             if role == "system":
                 content = msg["content"]
                 if isinstance(content, str):
-                    system_blocks.append({
-                        "type": "text",
-                        "text": content,
-                        "cache_control": {"type": "ephemeral"},
-                    })
+                    system_blocks.append(
+                        {
+                            "type": "text",
+                            "text": content,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    )
                 elif isinstance(content, list):
                     # LangGraph sends [{"type":"text","text":"..."},...]
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
-                            system_blocks.append({
-                                "type": "text",
-                                "text": block["text"],
-                                "cache_control": {"type": "ephemeral"},
-                            })
+                            system_blocks.append(
+                                {
+                                    "type": "text",
+                                    "text": block["text"],
+                                    "cache_control": {"type": "ephemeral"},
+                                }
+                            )
                         elif isinstance(block, str):
-                            system_blocks.append({
-                                "type": "text",
-                                "text": block,
-                                "cache_control": {"type": "ephemeral"},
-                            })
+                            system_blocks.append(
+                                {
+                                    "type": "text",
+                                    "text": block,
+                                    "cache_control": {"type": "ephemeral"},
+                                }
+                            )
 
             elif role == "tool":
                 # OpenAI: {"role":"tool","content":"...","tool_call_id":"..."}
                 # Anthropic: {"role":"user","content":[{"type":"tool_result","tool_use_id":"...","content":"..."}]}
                 import re
+
                 raw_id = msg.get("tool_call_id", "") or "tool_result"
                 tool_use_id = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_id)
                 tool_content = msg.get("content", "")
@@ -292,14 +298,18 @@ class ClaudeCodeCustomHandler(CustomLLM):
                         elif isinstance(block, str):
                             parts.append(block)
                     tool_content = "\n".join(parts)
-                api_messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": str(tool_content),
-                    }],
-                })
+                api_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": str(tool_content),
+                            }
+                        ],
+                    }
+                )
 
             elif role == "assistant" and msg.get("tool_calls"):
                 # OpenAI: {"role":"assistant","tool_calls":[{"function":{"name":"...","arguments":"..."}}]}
@@ -329,6 +339,7 @@ class ClaudeCodeCustomHandler(CustomLLM):
 
                     # Ensure id matches Anthropic pattern ^[a-zA-Z0-9_-]+$
                     import re
+
                     tc_id = re.sub(r"[^a-zA-Z0-9_-]", "_", tc_id) if tc_id else f"tool_{tc_name}"
 
                     try:
@@ -338,12 +349,14 @@ class ClaudeCodeCustomHandler(CustomLLM):
                     if not isinstance(args, dict):
                         args = {}
 
-                    content_blocks.append({
-                        "type": "tool_use",
-                        "id": tc_id,
-                        "name": tc_name,
-                        "input": args,
-                    })
+                    content_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc_id,
+                            "name": tc_name,
+                            "input": args,
+                        }
+                    )
                 api_messages.append({"role": "assistant", "content": content_blocks})
 
             else:
@@ -356,7 +369,7 @@ class ClaudeCodeCustomHandler(CustomLLM):
         opts = optional_params or {}
         # Limit cache_control blocks to 4 (Anthropic API max)
         if len(system_blocks) > 4:
-            keep = [system_blocks[0]] + system_blocks[-(4 - 1):]
+            keep = [system_blocks[0]] + system_blocks[-(4 - 1) :]
             for block in system_blocks:
                 if block not in keep and "cache_control" in block:
                     del block["cache_control"]
@@ -381,11 +394,15 @@ class ClaudeCodeCustomHandler(CustomLLM):
             anthropic_tools = []
             for t in openai_tools:
                 func = t.get("function", {})
-                anthropic_tools.append({
-                    "name": func.get("name", ""),
-                    "description": func.get("description", ""),
-                    "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
-                })
+                anthropic_tools.append(
+                    {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "input_schema": func.get(
+                            "parameters", {"type": "object", "properties": {}}
+                        ),
+                    }
+                )
             request_body["tools"] = anthropic_tools
 
         tool_choice = opts.get("tool_choice")
@@ -453,25 +470,23 @@ class ClaudeCodeCustomHandler(CustomLLM):
         content_blocks = data.get("content", [])
 
         # Extract text content
-        text_parts = [
-            block["text"]
-            for block in content_blocks
-            if block.get("type") == "text"
-        ]
+        text_parts = [block["text"] for block in content_blocks if block.get("type") == "text"]
         response_text = "\n".join(text_parts) if text_parts else None
 
         # Extract tool_use blocks → OpenAI tool_calls format
         tool_calls = []
         for block in content_blocks:
             if block.get("type") == "tool_use":
-                tool_calls.append({
-                    "id": block.get("id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": block["name"],
-                        "arguments": json.dumps(block.get("input", {})),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block["name"],
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    }
+                )
 
         # Build message dict
         message: dict[str, Any] = {"role": "assistant"}
@@ -496,11 +511,13 @@ class ClaudeCodeCustomHandler(CustomLLM):
         response = ModelResponse(
             id=data.get("id", f"chatcmpl-{actual_model}"),
             model=actual_model,
-            choices=[{
-                "index": 0,
-                "message": message,
-                "finish_reason": finish_reason,
-            }],
+            choices=[
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": finish_reason,
+                }
+            ],
             usage={
                 "prompt_tokens": input_tokens,
                 "completion_tokens": output_tokens,
@@ -559,7 +576,11 @@ class ClaudeCodeCustomHandler(CustomLLM):
             if isinstance(msg, dict):
                 content = msg.get("content")
                 raw_tool_calls = msg.get("tool_calls", [])
-                finish_reason = choice.get("finish_reason", "stop") if isinstance(choice, dict) else getattr(choice, "finish_reason", "stop")
+                finish_reason = (
+                    choice.get("finish_reason", "stop")
+                    if isinstance(choice, dict)
+                    else getattr(choice, "finish_reason", "stop")
+                )
             else:
                 content = getattr(msg, "content", None)
                 raw_tool_calls = getattr(msg, "tool_calls", []) or []
@@ -580,15 +601,19 @@ class ClaudeCodeCustomHandler(CustomLLM):
                     tc_name = getattr(func, "name", "") if func else ""
                     tc_args = getattr(func, "arguments", "{}") if func else "{}"
 
-                tool_calls_list.append({
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc_name,
-                        "arguments": tc_args if isinstance(tc_args, str) else json.dumps(tc_args),
-                    },
-                    "index": i,
-                })
+                tool_calls_list.append(
+                    {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc_name,
+                            "arguments": tc_args
+                            if isinstance(tc_args, str)
+                            else json.dumps(tc_args),
+                        },
+                        "index": i,
+                    }
+                )
 
         usage = {
             "completion_tokens": response.usage.completion_tokens if response.usage else 0,
@@ -601,34 +626,40 @@ class ClaudeCodeCustomHandler(CustomLLM):
         if tool_calls_list:
             # Yield text chunk first if any
             if text:
-                chunks.append({
-                    "text": text,
-                    "is_finished": False,
-                    "finish_reason": "",
-                    "index": 0,
-                    "tool_use": None,
-                    "usage": None,
-                })
+                chunks.append(
+                    {
+                        "text": text,
+                        "is_finished": False,
+                        "finish_reason": "",
+                        "index": 0,
+                        "tool_use": None,
+                        "usage": None,
+                    }
+                )
             # Yield each tool call as a separate chunk
             for i, tc in enumerate(tool_calls_list):
                 is_last = i == len(tool_calls_list) - 1
-                chunks.append({
-                    "text": "",
-                    "is_finished": is_last,
-                    "finish_reason": "tool_calls" if is_last else "",
-                    "index": 0,
-                    "tool_use": tc,
-                    "usage": usage if is_last else None,
-                })
+                chunks.append(
+                    {
+                        "text": "",
+                        "is_finished": is_last,
+                        "finish_reason": "tool_calls" if is_last else "",
+                        "index": 0,
+                        "tool_use": tc,
+                        "usage": usage if is_last else None,
+                    }
+                )
         else:
-            chunks.append({
-                "text": text,
-                "is_finished": True,
-                "finish_reason": finish_reason or "stop",
-                "index": 0,
-                "tool_use": None,
-                "usage": usage,
-            })
+            chunks.append(
+                {
+                    "text": text,
+                    "is_finished": True,
+                    "finish_reason": finish_reason or "stop",
+                    "index": 0,
+                    "tool_use": None,
+                    "usage": usage,
+                }
+            )
 
         return chunks
 

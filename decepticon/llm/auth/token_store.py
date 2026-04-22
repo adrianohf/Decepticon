@@ -3,6 +3,7 @@
 Token format is compatible with Claude Code CLI's token storage
 at ~/.config/anthropic/q/tokens.json.
 """
+
 from __future__ import annotations
 
 import json

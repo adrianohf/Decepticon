@@ -6,6 +6,7 @@ a Claude Code (or Claude Pro/Max) subscription. No API key required.
 Reference: not-claude-code-emulator/src/services/oauth-flow.ts
            not-claude-code-emulator/src/config/oauth.ts
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -293,9 +294,7 @@ class ClaudeCodeAuthProvider(BaseOAuthProvider):
         finally:
             server.shutdown()
 
-    def _build_auth_url(
-        self, challenge: str, state: str, redirect_uri: str
-    ) -> str:
+    def _build_auth_url(self, challenge: str, state: str, redirect_uri: str) -> str:
         """Build the OAuth authorization URL with PKCE parameters."""
         params = {
             "code": "true",

@@ -1,4 +1,5 @@
 """Ollama local LLM auto-detection."""
+
 from __future__ import annotations
 
 import httpx
@@ -6,6 +7,7 @@ import httpx
 from decepticon.core.logging import get_logger
 
 log = get_logger("llm.providers.ollama")
+
 
 async def is_ollama_available(base_url: str = "http://localhost:11434") -> bool:
     """Check if Ollama is running and accessible."""
@@ -15,6 +17,7 @@ async def is_ollama_available(base_url: str = "http://localhost:11434") -> bool:
             return resp.status_code == 200
     except Exception:
         return False
+
 
 async def list_ollama_models(base_url: str = "http://localhost:11434") -> list[str]:
     """List available Ollama models."""

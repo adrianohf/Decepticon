@@ -9,6 +9,7 @@ For direct API access, use OPENAI_API_KEY instead.
 
 Reference: .omc/research/codex-oauth.md
 """
+
 from __future__ import annotations
 
 import asyncio

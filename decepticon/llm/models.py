@@ -384,8 +384,5 @@ class LLMModelMapping(BaseModel):
             )
 
         return self.model_copy(
-            update={
-                field: _remap(getattr(self, field))
-                for field in self.__class__.model_fields
-            }
+            update={field: _remap(getattr(self, field)) for field in self.__class__.model_fields}
         )

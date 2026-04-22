@@ -7,6 +7,7 @@ subscription-authenticated Claude Code session.
 Reference: not-claude-code-emulator/src/services/oauth-client.ts
            not-claude-code-emulator/src/services/request-transformer.ts
 """
+
 from __future__ import annotations
 
 import hashlib

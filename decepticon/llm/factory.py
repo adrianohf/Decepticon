@@ -72,7 +72,9 @@ class LLMFactory:
         from decepticon.core.config import load_config
 
         config = load_config()
-        return LLMModelMapping.from_profile(config.model_profile).with_provider(config.model_provider)
+        return LLMModelMapping.from_profile(config.model_profile).with_provider(
+            config.model_provider
+        )
 
     @property
     def proxy_url(self) -> str:

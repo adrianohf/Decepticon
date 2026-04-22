@@ -9,6 +9,7 @@ binary computes. The algorithm:
 
 Reference: not-claude-code-emulator/src/services/cch.ts
 """
+
 from __future__ import annotations
 
 import xxhash
