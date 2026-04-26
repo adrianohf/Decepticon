@@ -92,3 +92,7 @@ clients/ee/
 CLAUDE.md
 references/octogent
 clients/launcher/decepticon
+
+# Benchmark
+benchmark/results/
+benchmark/workspaces/
