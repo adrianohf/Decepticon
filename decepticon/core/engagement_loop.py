@@ -691,6 +691,7 @@ class EngagementLoop:
             outcome=outcome,
             findings_produced=unique_findings,
             duration_seconds=round(time.time() - start, 2),
+            raw_output=response,
         )
 
     def _load_opplan(self) -> OPPLAN | None:

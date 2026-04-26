@@ -19,7 +19,7 @@ export DECEPTICON_HOME ?= $(HOME)/.decepticon
 .PHONY: dev start cli cli-dev web web-dev infra web-db-ensure web-build web-lint web-migrate web-ee web-oss \
         stop status logs health smoke build \
         test test-local lint lint-fix quality-cli quality \
-        clean demo victims help
+        clean demo victims help benchmark
 
 # ── Development ──────────────────────────────────────────────────
 
@@ -263,3 +263,9 @@ help:
 	@echo "  make victims      Start vulnerable targets (DVWA + Metasploitable 2)"
 	@echo "  make demo         Run guided demo"
 	@echo "  make clean        Stop + remove volumes"
+
+# ── Benchmark ───────────────────────────────────────────────────
+
+## Run benchmark suite (usage: make benchmark or make benchmark ARGS="--level 1 --range-start 1 --range-end 5")
+benchmark:
+	uv run python -m benchmark.runner $(ARGS)

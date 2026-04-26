@@ -134,7 +134,13 @@ def _refresh_token(tokens: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_access_token() -> str:
-    """Get a valid access token, refreshing if needed."""
+    """Get a valid access token, refreshing if needed.
+
+    When the cached token is expired, re-read from disk first — Claude Code
+    CLI continuously refreshes tokens in ~/.claude/.credentials.json, so a
+    fresh token may already be available without needing to call the refresh
+    endpoint ourselves.
+    """
     global _cached_token  # noqa: PLW0603
 
     tokens = _cached_token or _load_tokens()
@@ -146,7 +152,12 @@ def get_access_token() -> str:
         )
 
     if _is_expired(tokens):
-        tokens = _refresh_token(tokens)
+        # Re-read from disk — Claude Code may have already refreshed the token
+        fresh = _load_tokens()
+        if fresh and not _is_expired(fresh):
+            tokens = fresh
+        else:
+            tokens = _refresh_token(tokens)
 
     _cached_token = tokens
     return tokens["accessToken"]

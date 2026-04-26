@@ -31,6 +31,7 @@ create_postexploit_agent) so they run with their full middleware stack and
 skill sets intact.
 """
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Annotated, Literal, NotRequired
@@ -83,9 +84,16 @@ class OrchestratorState(AgentState):
 
 
 def _check_engagement_docs(state: dict) -> dict:
-    """Check Docker sandbox for existing engagement documents (roe + conops + deconfliction)."""
-    config = load_config()
-    container = config.docker.sandbox_container_name
+    """Check Docker sandbox for existing engagement documents (roe + conops + deconfliction).
+
+    When BENCHMARK_MODE env var is set (via .env → docker-compose), skip the
+    doc check entirely and route straight to the decepticon agent.
+    """
+    if os.getenv("BENCHMARK_MODE"):
+        return {"has_engagement_docs": True}
+
+    app_config = load_config()
+    container = app_config.docker.sandbox_container_name
     try:
         result = subprocess.run(
             [

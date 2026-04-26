@@ -120,12 +120,13 @@ skip_covered = false
 
 [tool.basedpyright]
 pythonVersion = "3.13"
-include = ["decepticon", "tests"]
+include = ["decepticon", "tests", "benchmark"]
 exclude = [
     "**/__pycache__",
     "**/node_modules",
     "reference",
     "decepticon/auth/providers",
+    "benchmark/xbow-validation-benchmarks",
 ]
 # Use pyright "standard" semantics rather than the basedpyright "all" default —
 # the existing codebase predates basedpyright's stricter rules. As code is

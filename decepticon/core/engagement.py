@@ -92,6 +92,10 @@ class IterationResult(BaseModel):
     )
     duration_seconds: float = Field(default=0.0, description="Wall-clock execution time")
     error: str | None = Field(default=None, description="Error message if the iteration failed")
+    raw_output: str = Field(
+        default="",
+        description="Complete agent response text for this iteration",
+    )
 
 
 # ── Engagement state ───────────────────────────────────────────────────────────
