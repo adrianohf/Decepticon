@@ -61,15 +61,13 @@ from collections.abc import AsyncIterator, Iterator  # noqa: E402
 from typing import Any  # noqa: E402
 
 import litellm  # noqa: E402
-from litellm import CustomLLM, ModelResponse  # noqa: E402
-
 from claude_code_handler import claude_code_handler_instance  # noqa: E402
 from codex_handler import codex_handler_instance  # noqa: E402
 from copilot_handler import copilot_handler_instance  # noqa: E402
 from gemini_handler import gemini_sub_handler_instance  # noqa: E402
 from grok_handler import grok_sub_handler_instance  # noqa: E402
+from litellm import CustomLLM, ModelResponse  # noqa: E402
 from perplexity_handler import perplexity_sub_handler_instance  # noqa: E402
-
 
 # ── auth/ provider dispatcher ─────────────────────────────────────────
 # The ``auth/`` namespace fans out to two underlying handlers:
