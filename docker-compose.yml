@@ -126,10 +126,10 @@ services:
       # play (raw `make dev`, benchmark harness, dev workflows), the fallback is
       # the whole tree under <home>/workspace.
       - ${DECEPTICON_ENGAGEMENT_WORKSPACE:-${DECEPTICON_HOME:-~/.decepticon}/workspace}:/workspace
-      # Skill library bind-mount. All agents read /skills/ via the sandbox
-      # (DockerSandbox backend) so the langgraph process never touches the
-      # host filesystem directly. Read-only — skills are authored on host.
-      - ./skills:/skills:ro
+      # NOTE: ``/skills/`` is baked into the sandbox image (containers/sandbox.Dockerfile)
+      # so OSS installs work without a host-side ./skills/ directory. Devs
+      # iterating on skill files override the baked copy via the bind mount in
+      # docker-compose.override.yml.
     mem_limit: 4g
     cpus: 2.0
     pids_limit: 1024

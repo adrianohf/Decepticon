@@ -212,33 +212,47 @@ func ValidateAPIKeys(env map[string]string) error {
 
 // ValidateAuth ensures at least one valid AuthMethod is configured.
 //
-// OAuth path: DECEPTICON_AUTH_CLAUDE_CODE=true (set by the onboard wizard
-// when Claude Code OAuth is selected) requires a parseable
-// ~/.claude/.credentials.json with an access token. LiteLLM mounts the
-// file read-only at runtime; missing or empty fails opaquely on the
-// first prompt unless we catch it here.
+// OAuth paths:
+//   - DECEPTICON_AUTH_CLAUDE_CODE=true requires a parseable
+//     ~/.claude/.credentials.json with an access token. LiteLLM mounts
+//     the file read-only at runtime.
+//   - DECEPTICON_AUTH_CHATGPT=true requires CHATGPT_SESSION_TOKEN or
+//     CHATGPT_ACCESS_TOKEN in env, or ~/.config/chatgpt/tokens.json on
+//     disk. The codex_handler reads from these in priority order.
 //
 // API path: at least one ANTHROPIC / OPENAI / GEMINI / MINIMAX_API_KEY
 // must be set to a non-placeholder, well-formed value.
 //
 // At least one path must succeed. When OAuth is requested and its
-// credentials file is broken, the API path is checked as a fallback;
-// if both fail, the OAuth error is surfaced because that was the
-// user's explicit choice.
+// credentials are broken, the API path is checked as a fallback; if all
+// fail, the OAuth error is surfaced first because that was the user's
+// explicit choice.
 func ValidateAuth(env map[string]string) error {
-	oauthEnabled := isTruthy(Get(env, "DECEPTICON_AUTH_CLAUDE_CODE", ""))
+	claudeOAuth := isTruthy(Get(env, "DECEPTICON_AUTH_CLAUDE_CODE", ""))
+	chatgptOAuth := isTruthy(Get(env, "DECEPTICON_AUTH_CHATGPT", ""))
 	apiErr := ValidateAPIKeys(env)
 
-	if oauthEnabled {
-		if oauthErr := validateClaudeCredentials(); oauthErr == nil {
+	if claudeOAuth {
+		if err := validateClaudeCredentials(); err == nil {
 			return nil
-		} else if apiErr == nil {
-			return nil
-		} else {
-			return oauthErr
 		}
 	}
+	if chatgptOAuth {
+		if err := validateChatGPTCredentials(env); err == nil {
+			return nil
+		}
+	}
+	if apiErr == nil {
+		return nil
+	}
 
+	// All paths failed — surface OAuth errors first (explicit user choice).
+	if claudeOAuth {
+		return validateClaudeCredentials()
+	}
+	if chatgptOAuth {
+		return validateChatGPTCredentials(env)
+	}
 	return apiErr
 }
 
@@ -284,6 +298,44 @@ func validateClaudeCredentials() error {
 		return fmt.Errorf("no access token found in %s\nRun 'claude /login' to re-authenticate.", path)
 	}
 	return nil
+}
+
+// validateChatGPTCredentials verifies the user has at least one ChatGPT subscription
+// token reachable to the LiteLLM container. Resolution order matches
+// config/codex_handler.py exactly:
+//
+//  1. CHATGPT_ACCESS_TOKEN env var (pre-extracted Bearer)
+//  2. CHATGPT_SESSION_TOKEN env var (browser ``__Secure-next-auth.session-token`` cookie)
+//  3. ~/.config/chatgpt/tokens.json on disk
+//
+// We don't validate the token shape itself — ChatGPT session tokens and access
+// tokens have varied formats over time. We only verify *something* is wired up,
+// catching the "selected ChatGPT OAuth in onboard but never pasted a token" case
+// before the first agent prompt fails opaquely.
+func validateChatGPTCredentials(env map[string]string) error {
+	if env["CHATGPT_ACCESS_TOKEN"] != "" {
+		return nil
+	}
+	if env["CHATGPT_SESSION_TOKEN"] != "" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home directory: %w", err)
+	}
+	path := filepath.Join(home, ".config", "chatgpt", "tokens.json")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		"ChatGPT subscription token not configured.\n"+
+			"Provide one of:\n"+
+			"  - CHATGPT_SESSION_TOKEN env (paste browser '__Secure-next-auth.session-token' cookie)\n"+
+			"  - CHATGPT_ACCESS_TOKEN env (pre-extracted Bearer token)\n"+
+			"  - %s on disk\n"+
+			"Run 'decepticon onboard --reset' to (re)configure interactively.",
+		path,
+	)
 }
 
 // extractClaudeAccessToken walks the credentials JSON in the same resolution order as

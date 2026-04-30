@@ -54,6 +54,22 @@ RUN echo "set-option -g history-limit 50000" > /root/.tmux.conf
 # and unrestricted filesystem access during red team operations.
 WORKDIR /workspace
 
+# Skill library — baked at /skills/ so every agent (recon, exploit, analyst,
+# detector, soundwave, ...) can resolve `/skills/<category>/<skill>/SKILL.md`
+# via the load_skill tool without depending on a host-side bind mount. The
+# OSS install path doesn't ship skills/ to disk, so without this COPY the
+# sandbox container would expose an empty /skills/ and every agent prompt
+# referencing a skill file would fail.
+#
+# Devs iterating on skill content override this at runtime via the
+# `./skills:/skills:ro` bind mount in docker-compose.override.yml — that
+# file is committed but not downloaded by install.sh, so OSS users
+# automatically get the baked-in skills and devs get hot-edits.
+#
+# Placed after the heavy apt-install layer so a skill-only edit invalidates
+# only this thin trailing layer.
+COPY skills/ /skills/
+
 # Entrypoint: chmod 777 /workspace so host user can access files without sudo.
 # Security boundary is the container, not file permissions.
 COPY containers/sandbox-entrypoint.sh /entrypoint.sh

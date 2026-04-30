@@ -86,6 +86,11 @@ jobs:
               - '.github/workflows/ci.yml'
             sandbox:
               - 'containers/sandbox.Dockerfile'
+              # Skills are baked into the sandbox image (see Dockerfile),
+              # so any skill content change must rebuild the image — without
+              # this filter CI passes green while the published sandbox tag
+              # silently lags behind the skill library on disk.
+              - 'skills/**'
               - '.github/workflows/ci.yml'
             cli:
               - 'containers/cli.Dockerfile'

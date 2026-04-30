@@ -28,6 +28,7 @@ func init() {
 const (
 	methodAnthropicOAuth = "anthropic_oauth"
 	methodAnthropicAPI   = "anthropic_api"
+	methodOpenAIOAuth    = "openai_oauth"
 	methodOpenAIAPI      = "openai_api"
 	methodGoogleAPI      = "google_api"
 	methodMiniMaxAPI     = "minimax_api"
@@ -43,6 +44,7 @@ const (
 var methodOrder = []string{
 	methodAnthropicOAuth,
 	methodAnthropicAPI,
+	methodOpenAIOAuth,
 	methodOpenAIAPI,
 	methodGoogleAPI,
 	methodMiniMaxAPI,
@@ -58,16 +60,17 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	}
 
 	var (
-		methods       []string
-		anthropicKey  string
-		openaiKey     string
-		geminiKey     string
-		minimaxKey    string
-		openrouterKey string
-		nvidiaKey     string
-		profile       string
-		useLangSmith  bool
-		langSmithKey  string
+		methods             []string
+		anthropicKey        string
+		openaiKey           string
+		geminiKey           string
+		minimaxKey          string
+		openrouterKey       string
+		nvidiaKey           string
+		chatgptSessionToken string
+		profile             string
+		useLangSmith        bool
+		langSmithKey        string
 	)
 
 	form := huh.NewForm(
@@ -86,6 +89,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 				Options(
 					huh.NewOption("Claude Code OAuth — Anthropic subscription (auth/*)", methodAnthropicOAuth),
 					huh.NewOption("Anthropic API Key — sk-ant-...", methodAnthropicAPI),
+					huh.NewOption("ChatGPT OAuth     — ChatGPT Pro/Plus/Team subscription (auth/gpt-*)", methodOpenAIOAuth),
 					huh.NewOption("OpenAI API Key    — sk-...", methodOpenAIAPI),
 					huh.NewOption("Google API Key    — AIza... (Gemini)", methodGoogleAPI),
 					huh.NewOption("MiniMax API Key   — eyJ...", methodMiniMaxAPI),
@@ -113,7 +117,26 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 		).Title("2 / 4  ·  Anthropic API").
 			WithHideFunc(func() bool { return !contains(methods, methodAnthropicAPI) }),
 
-		// Step 2b: OpenAI API key
+		// Step 2b: ChatGPT subscription session token
+		// ChatGPT OAuth has no equivalent of `claude /login` to provision
+		// tokens automatically, so we ask the user to paste the
+		// `__Secure-next-auth.session-token` cookie from a signed-in
+		// chatgpt.com browser session. Optional — users who set
+		// CHATGPT_ACCESS_TOKEN externally or place ~/.config/chatgpt/tokens.json
+		// can leave this blank and skip with Enter.
+		huh.NewGroup(
+			huh.NewNote().
+				Title("ChatGPT Session Token").
+				Description("Open chatgpt.com → DevTools → Application →\nCookies → chatgpt.com → copy the value of\n`__Secure-next-auth.session-token`. Or leave\nblank to use CHATGPT_ACCESS_TOKEN / tokens.json."),
+			huh.NewInput().
+				Title("CHATGPT_SESSION_TOKEN").
+				Placeholder("eyJhbGciOiJ...   (leave blank to skip)").
+				EchoMode(huh.EchoModePassword).
+				Value(&chatgptSessionToken),
+		).Title("2 / 4  ·  ChatGPT OAuth").
+			WithHideFunc(func() bool { return !contains(methods, methodOpenAIOAuth) }),
+
+		// Step 2c: OpenAI API key
 		huh.NewGroup(
 			huh.NewInput().
 				Title("OpenAI API Key").
@@ -221,6 +244,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 		"DECEPTICON_MODEL_PROFILE":    profile,
 		"DECEPTICON_AUTH_PRIORITY":    strings.Join(priority, ","),
 		"DECEPTICON_AUTH_CLAUDE_CODE": boolStr(contains(methods, methodAnthropicOAuth)),
+		"DECEPTICON_AUTH_CHATGPT":     boolStr(contains(methods, methodOpenAIOAuth)),
 	}
 
 	if anthropicKey != "" {
@@ -240,6 +264,9 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	}
 	if nvidiaKey != "" {
 		values["NVIDIA_API_KEY"] = nvidiaKey
+	}
+	if chatgptSessionToken != "" {
+		values["CHATGPT_SESSION_TOKEN"] = chatgptSessionToken
 	}
 
 	if useLangSmith && langSmithKey != "" {
