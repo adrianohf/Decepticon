@@ -114,12 +114,22 @@ jobs:
           format: cyclonedx-json
           output-file: sbom-${{ matrix.image }}.cdx.json
 
-      # Retry with backoff because the public Sigstore Rekor (rekor.sigstore.dev)
-      # has intermittent outages that hit `cosign attest` faster than its 4
-      # internal attempts can absorb. The image is already signed by the
-      # previous step and the SBOM file is uploaded as an artifact below;
-      # if all retries fail we emit a workflow warning and continue so a
-      # transparency-log degradation does not block a release.
+      # The OCI attestation is always attached to the image. The
+      # `--tlog-upload` flag controls whether the entry is also pushed to
+      # the public Sigstore Rekor transparency log.
+      #
+      # decepticon-sandbox: SBOM is ~7 MB (Kali rolling base + full pentest
+      # toolchain ⇒ thousands of dpkg components). Rekor's per-entry size
+      # cap (~5 MiB) deterministically rejects the upload, so we attach
+      # the attestation to the OCI artifact only. Verifiers can still run
+      # `cosign verify-attestation` against the registry; only the public
+      # transparency-log entry is omitted for this one image.
+      #
+      # All other images: keep the default Rekor upload, but wrap in a
+      # 5-attempt linear backoff to absorb transient Rekor 5xx without
+      # blocking the release. Final failure emits a workflow ::warning
+      # but does not fail the job — the image is already signed and the
+      # SBOM file is uploaded as a release artifact below.
       - name: Attest SBOM with cosign
         env:
           COSIGN_EXPERIMENTAL: "true"
@@ -128,9 +138,14 @@ jobs:
           set -uo pipefail
           target="ghcr.io/purpleailab/${{ matrix.image }}@${DIGEST}"
           predicate="sbom-${{ matrix.image }}.cdx.json"
+          extra=()
+          if [ "${{ matrix.image }}" = "decepticon-sandbox" ]; then
+            extra+=(--tlog-upload=false)
+            echo "decepticon-sandbox: SBOM exceeds Rekor entry size cap; attaching attestation to OCI only (--tlog-upload=false)."
+          fi
           for attempt in 1 2 3 4 5; do
             echo "Attestation attempt ${attempt}/5 for ${target}"
-            if cosign attest --yes \
+            if cosign attest --yes "${extra[@]}" \
                 --predicate "${predicate}" \
                 --type cyclonedx \
                 "${target}"; then

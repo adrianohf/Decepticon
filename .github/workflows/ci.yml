@@ -38,6 +38,7 @@ jobs:
       python: ${{ steps.app.outputs.python }}
       cli: ${{ steps.app.outputs.cli }}
       web: ${{ steps.app.outputs.web }}
+      launcher: ${{ steps.app.outputs.launcher }}
       docker-images: ${{ steps.docker.outputs.changes }}
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +63,9 @@ jobs:
               - 'clients/shared/**'
               - 'package.json'
               - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+            launcher:
+              - 'clients/launcher/**'
               - '.github/workflows/ci.yml'
       # Per-image filter: filter name == image name so the matrix can pull
       # `outputs.changes` directly as the list of images to build.
@@ -202,6 +206,27 @@ jobs:
         run: cd clients/web && npm run build
         env:
           NEXT_PUBLIC_DECEPTICON_EDITION: oss
+
+  # Go launcher: vet + test. Mirrors what release.yml runs before GoReleaser
+  # builds the binaries on tag push, so a broken `go test ./...` is caught
+  # at PR time instead of blocking the release pipeline.
+  launcher:
+    name: Launcher (Go vet + test)
+    needs: changes
+    if: needs.changes.outputs.launcher == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: clients/launcher/go.sum
+      - name: go vet
+        working-directory: clients/launcher
+        run: go vet ./...
+      - name: go test
+        working-directory: clients/launcher
+        run: go test ./...
 
   docker-build:
     name: Docker build (${{ matrix.image }})
