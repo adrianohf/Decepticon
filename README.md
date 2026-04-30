@@ -160,7 +160,7 @@ The active **profile** decides each agent's tier:
 | `anthropic_api`   | claude-opus-4-7          | claude-sonnet-4-6         | claude-haiku-4-5                    |
 | `anthropic_oauth` | auth/claude-opus-4-7     | auth/claude-sonnet-4-6    | auth/claude-haiku-4-5               |
 | `openai_api`      | gpt-5.5                  | gpt-5.4                   | gpt-5-nano                        |
-| `openai_oauth`    | chatgpt/gpt-4o           | chatgpt/o1                | chatgpt/o3-mini                    |
+| `openai_oauth`    | auth/gpt-5.5             | auth/gpt-5.4              | auth/gpt-5-nano                    |
 | `google_api`      | gemini-2.5-pro           | gemini-2.5-flash          | gemini-2.5-flash-lite               |
 | `deepseek_api`    | deepseek-reasoner        | deepseek-chat             | deepseek-chat                      |
 
@@ -192,7 +192,7 @@ Use your existing monthly subscription instead of pay-per-token API access:
 | Subscription | Price | Provider ID |
 |---|---|---|
 | **Claude Max / Pro / Team** | $20–$100/mo | `auth` |
-| **ChatGPT Pro / Plus / Team** | $20–$200/mo | `chatgpt` |
+| **ChatGPT Pro / Plus / Team** | $20–$200/mo | `auth` |
 | **Google Gemini Advanced** | $20/mo | `gemini-sub` |
 | **Microsoft Copilot Pro** | $20/mo | `copilot` |
 | **xAI SuperGrok** | X Premium+ | `grok-sub` |
@@ -200,10 +200,10 @@ Use your existing monthly subscription instead of pay-per-token API access:
 
 ```bash
 # Example: Use Claude Max subscription (no API cost)
-DECEPTICON_MODEL_PROVIDER=auth
+DECEPTICON_AUTH_CLAUDE_CODE=true
 
 # Example: Use ChatGPT Pro subscription
-DECEPTICON_MODEL_PROVIDER=chatgpt
+DECEPTICON_AUTH_CHATGPT=true
 ```
 
 → **[Full setup guide with OAuth instructions](docs/setup-guide.md)**

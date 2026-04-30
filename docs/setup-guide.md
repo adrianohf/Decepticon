@@ -230,7 +230,7 @@ decepticon onboard
 Or edit `~/.decepticon/.env`:
 
 ```bash
-DECEPTICON_MODEL_PROVIDER=chatgpt
+DECEPTICON_AUTH_CHATGPT=true
 CHATGPT_SESSION_TOKEN=eyJ...your-session-token...
 ```
 
@@ -242,8 +242,12 @@ decepticon
 
 **How it works:**
 
-- The `chatgpt` provider remaps `openai/*` model names to `chatgpt/*`
-- LiteLLM routes `chatgpt/*` through `chatgpt_handler.py`
+- The unified `auth/` provider dispatcher routes ChatGPT-subscription model
+  names (`auth/gpt-5.5`, `auth/gpt-5.4`, `auth/gpt-5-nano`) through
+  `chatgpt_handler.py`, while `auth/claude-*` continues to flow through
+  `claude_code_handler.py`. This avoids the native LiteLLM `chatgpt`
+  provider whose Codex device-code OAuth would otherwise fire at proxy
+  startup.
 - The handler exchanges the session token for an access token via `chatgpt.com/api/auth/session`
 - Requests hit `api.openai.com/v1/chat/completions` with the subscription Bearer token
 - Access tokens are cached and refreshed automatically

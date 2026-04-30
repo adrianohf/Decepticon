@@ -170,17 +170,23 @@ model_list:
       api_key: os.environ/NVIDIA_API_KEY
 
   # ── ChatGPT OAuth (subscription) ─────────────────────────────────────
-  - model_name: chatgpt/gpt-4o
+  # Routed under the unified ``auth/`` provider to avoid collision with
+  # LiteLLM's native ``chatgpt`` provider (which performs Codex CLI
+  # device-code OAuth at startup and breaks proxy boot in network-isolated
+  # environments). See config/auth_handler.py for the dispatcher.
+  # Model slugs mirror the openai/* tiers so ChatGPT-subscription users see
+  # the same identifiers as API-key users.
+  - model_name: auth/gpt-5.5
     litellm_params:
-      model: chatgpt/gpt-4o
+      model: auth/gpt-5.5
 
-  - model_name: chatgpt/o1
+  - model_name: auth/gpt-5.4
     litellm_params:
-      model: chatgpt/o1
+      model: auth/gpt-5.4
 
-  - model_name: chatgpt/o3-mini
+  - model_name: auth/gpt-5-nano
     litellm_params:
-      model: chatgpt/o3-mini
+      model: auth/gpt-5-nano
 
   # ── Gemini Advanced subscription ───────────────────────────────────
   - model_name: gemini-sub/gemini-2.5-pro
@@ -225,19 +231,19 @@ model_list:
       api_base: os.environ/OLLAMA_API_BASE
 
 litellm_settings:
-  custom_provider_map:
-    - provider: "auth"
-      custom_handler: claude_code_handler.claude_code_handler_instance
-    - provider: "chatgpt"
-      custom_handler: chatgpt_handler.chatgpt_handler_instance
-    - provider: "gemini-sub"
-      custom_handler: gemini_handler.gemini_sub_handler_instance
-    - provider: "copilot"
-      custom_handler: copilot_handler.copilot_handler_instance
-    - provider: "grok-sub"
-      custom_handler: grok_handler.grok_sub_handler_instance
-    - provider: "pplx-sub"
-      custom_handler: perplexity_handler.perplexity_sub_handler_instance
+  # NOTE: custom_provider_map is registered programmatically in
+  # ``litellm_startup.py`` (the proxy entrypoint) so handler imports are
+  # explicit and the registration order is deterministic. The YAML form
+  # is intentionally omitted because LiteLLM may skip ``litellm_settings``
+  # when ``database_url`` is set, and listing handlers here would also
+  # create a circular import with the dispatcher defined in startup.
+  #
+  # Active providers (registered in litellm_startup.py):
+  #   - auth         → dispatches to claude_code_handler / codex_handler
+  #   - gemini-sub   → gemini_handler.gemini_sub_handler_instance
+  #   - copilot      → copilot_handler.copilot_handler_instance
+  #   - grok-sub     → grok_handler.grok_sub_handler_instance
+  #   - pplx-sub     → perplexity_handler.perplexity_sub_handler_instance
   fallbacks:
     - {"auth/claude-opus-4-7": ["auth/claude-sonnet-4-6"]}
     - {"auth/claude-sonnet-4-6": ["auth/claude-haiku-4-5"]}

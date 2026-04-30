@@ -1,8 +1,8 @@
-"""Standalone LiteLLM custom handler for ChatGPT Pro/Plus subscription OAuth.
+"""Standalone LiteLLM custom handler for Codex / ChatGPT subscription OAuth.
 
 Routes requests through ChatGPT's backend API using session tokens from an
 authenticated browser session. This enables using ChatGPT Pro/Plus/Team
-subscription models (GPT-4o, o1, o3, GPT-4.5) without API billing.
+(``codex``) subscription models without API billing.
 
 This file is mounted into the LiteLLM container alongside litellm.yaml.
 It has NO dependency on the ``decepticon`` package.
@@ -12,13 +12,15 @@ Token sources (checked in order):
   2. CHATGPT_ACCESS_TOKEN env var (pre-extracted Bearer token)
   3. ~/.config/chatgpt/tokens.json (persisted by browser extraction tools)
 
-Registration in litellm.yaml:
-  litellm_settings:
-    custom_provider_map:
-      - provider: "chatgpt"
-        custom_handler: chatgpt_handler.chatgpt_handler_instance
+Registration: invoked through the ``auth/`` provider dispatcher defined in
+``litellm_startup.py``. The ``chatgpt`` provider name is reserved by
+LiteLLM v1.82+ for its native Codex device-code OAuth flow, so a direct
+``provider: "chatgpt"`` registration would be shadowed; routing under
+``auth/`` (alongside ``claude_code_handler``) avoids that collision.
 
-Model names: chatgpt/gpt-4o, chatgpt/o1, chatgpt/o3-mini, chatgpt/gpt-4.5, etc.
+Model names (resolved by the dispatcher): ``auth/gpt-5.5``, ``auth/gpt-5.4``,
+``auth/gpt-5-nano`` — slugs mirror the openai/* tier names so subscription
+users see identifiers consistent with API-key users.
 """
 
 from __future__ import annotations
@@ -185,7 +187,7 @@ def get_access_token() -> str:
 # ── Custom LLM Handler ──────────────────────────────────────────────
 
 
-class ChatGPTCustomHandler(CustomLLM):
+class CodexCustomHandler(CustomLLM):
     """LiteLLM custom handler that routes through ChatGPT Pro/Plus subscription.
 
     Model names: chatgpt/gpt-4o, chatgpt/o1, chatgpt/o3-mini, etc.
@@ -438,4 +440,4 @@ def _response_to_chunks(response: ModelResponse) -> list[dict[str, Any]]:
 
 
 # ── Module-level instance ────────────────────────────────────────────
-chatgpt_handler_instance = ChatGPTCustomHandler()
+codex_handler_instance = CodexCustomHandler()

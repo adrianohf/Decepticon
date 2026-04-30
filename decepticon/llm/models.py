@@ -126,9 +126,9 @@ METHOD_MODELS: dict[AuthMethod, dict[Tier, str]] = {
         Tier.MID: "minimax/MiniMax-M2.5-lightning",
     },
     AuthMethod.OPENAI_OAUTH: {
-        Tier.HIGH: "chatgpt/gpt-4o",
-        Tier.MID: "chatgpt/o1",
-        Tier.LOW: "chatgpt/o3-mini",
+        Tier.HIGH: "auth/gpt-5.5",
+        Tier.MID: "auth/gpt-5.4",
+        Tier.LOW: "auth/gpt-5-nano",
     },
     AuthMethod.GOOGLE_OAUTH: {
         Tier.HIGH: "gemini-sub/gemini-2.5-pro",

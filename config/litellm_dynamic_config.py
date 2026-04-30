@@ -51,7 +51,9 @@ ALLOWED_DYNAMIC_PROVIDERS = frozenset(
     {
         *PROVIDER_API_KEY_ENV,
         "ollama",
-        "chatgpt",
+        # ``auth/`` (subscription OAuth) is listed but rejected by validate()
+        # — kept here so the unrecognized-provider error doesn't fire first
+        # and confuse the user with a misleading "use custom/<model>" hint.
         "auth",
         "gemini_sub",
         "copilot",

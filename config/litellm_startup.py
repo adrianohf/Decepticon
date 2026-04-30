@@ -57,17 +57,74 @@ def _replace_config_arg() -> None:
 
 _replace_config_arg()
 
+from collections.abc import AsyncIterator, Iterator  # noqa: E402
+from typing import Any  # noqa: E402
+
 import litellm  # noqa: E402
-from chatgpt_handler import chatgpt_handler_instance  # noqa: E402
+from litellm import CustomLLM, ModelResponse  # noqa: E402
+
 from claude_code_handler import claude_code_handler_instance  # noqa: E402
+from codex_handler import codex_handler_instance  # noqa: E402
 from copilot_handler import copilot_handler_instance  # noqa: E402
 from gemini_handler import gemini_sub_handler_instance  # noqa: E402
 from grok_handler import grok_sub_handler_instance  # noqa: E402
 from perplexity_handler import perplexity_sub_handler_instance  # noqa: E402
 
+
+# ── auth/ provider dispatcher ─────────────────────────────────────────
+# The ``auth/`` namespace fans out to two underlying handlers:
+#   - claude_code_handler  (auth/claude-*)
+#   - codex_handler        (auth/gpt-*, auth/o1*, auth/o3*, auth/o4*,
+#                           auth/codex-*, auth/chatgpt-*)
+# This consolidation avoids the LiteLLM v1.82+ native ``chatgpt`` provider,
+# which performs Codex device-code OAuth at proxy startup and would shadow
+# a direct ``provider: "chatgpt"`` custom registration.
+
+_CODEX_PREFIXES = ("gpt-", "o1", "o3", "o4", "codex-", "chatgpt-")
+
+
+def _select_auth_handler(model: str) -> CustomLLM:
+    slug = model.split("/", 1)[-1] if "/" in model else model
+    slug_lower = slug.lower()
+    if slug_lower.startswith("claude-"):
+        return claude_code_handler_instance
+    if slug_lower.startswith(_CODEX_PREFIXES):
+        return codex_handler_instance
+    raise litellm.BadRequestError(
+        message=(
+            f"auth/ provider: model slug {slug!r} did not match any known "
+            "subscription handler. Supported prefixes: claude-*, gpt-*, "
+            "o1*, o3*, o4*, codex-*, chatgpt-*."
+        ),
+        model=model,
+        llm_provider="auth",
+    )
+
+
+class _AuthDispatcher(CustomLLM):
+    def completion(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        model = kwargs.get("model") or (args[0] if args else "")
+        return _select_auth_handler(model).completion(*args, **kwargs)
+
+    async def acompletion(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        model = kwargs.get("model") or (args[0] if args else "")
+        return await _select_auth_handler(model).acompletion(*args, **kwargs)
+
+    def streaming(self, *args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        model = kwargs.get("model") or (args[0] if args else "")
+        return _select_auth_handler(model).streaming(*args, **kwargs)
+
+    async def astreaming(self, *args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        model = kwargs.get("model") or (args[0] if args else "")
+        async for chunk in _select_auth_handler(model).astreaming(*args, **kwargs):
+            yield chunk
+
+
+_auth_dispatcher_instance = _AuthDispatcher()
+
+
 litellm.custom_provider_map = [
-    {"provider": "auth", "custom_handler": claude_code_handler_instance},
-    {"provider": "chatgpt", "custom_handler": chatgpt_handler_instance},
+    {"provider": "auth", "custom_handler": _auth_dispatcher_instance},
     {"provider": "gemini-sub", "custom_handler": gemini_sub_handler_instance},
     {"provider": "copilot", "custom_handler": copilot_handler_instance},
     {"provider": "grok-sub", "custom_handler": grok_sub_handler_instance},
@@ -78,7 +135,10 @@ from litellm.utils import custom_llm_setup  # noqa: E402
 
 custom_llm_setup()
 
-print("[decepticon] 6 subscription handlers registered", flush=True)
+print(
+    "[decepticon] auth dispatcher (claude_code + codex) + 4 subscription handlers registered",
+    flush=True,
+)
 
 # Start LiteLLM server with remaining CLI args
 # run_server() uses Click which reads sys.argv
