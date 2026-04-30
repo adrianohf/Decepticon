@@ -210,6 +210,16 @@ DECEPTICON_MODEL_PROVIDER=chatgpt
 
 ---
 
+## Benchmark Results
+
+| Benchmark | Difficulty | Pass Rate |
+|-----------|------------|-----------|
+| [XBOW validation-benchmarks](https://github.com/xbow-engineering/validation-benchmarks) | Hard (Level 3) | **7 / 8** |
+
+→ **[Full benchmark index](benchmark/results/README.md)**
+
+---
+
 ## Documentation
 
 | Topic | Doc |

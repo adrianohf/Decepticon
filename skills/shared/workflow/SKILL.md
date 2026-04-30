@@ -211,6 +211,81 @@ The `defense-evasion` skill applies to **exploitation and post-exploitation phas
 | C2 | Malleable profiles, encrypted channels, sleep obfuscation |
 | Lateral Movement | Living-off-the-land binaries, token manipulation |
 
+## Sandbox Bash Discipline
+
+The sandbox bash environment is intentionally restricted. The following patterns waste a probe (or hang the cycle) and MUST be avoided across every phase. Prefer the `python3` patterns below — they are deterministic, timeout-bounded, and produce machine-readable output.
+
+### Anti-patterns (do NOT)
+
+| Pattern | Why it's bad |
+|---------|--------------|
+| `bash <<'EOF' ... EOF` heredocs in tool calls | Often truncated mid-stream, brittle quoting, ambiguous timeout behavior. |
+| Trailing `&` to "parallelize" (`curl ... & curl ... & wait`) | Backgrounded jobs detach from the tool's stdout/timeout — silent failures, races nobody can read. |
+| `nohup python3 script.py &` | Functionally identical to `&` backgrounding — process detaches, stdout is lost, cannot be timed out by outer wall-clock. Use `timeout N python3 -u -c '...' \| tee log.txt` instead. |
+| Unbounded `sleep`, `nc -l`, `tail -f`, `while true` | Hits the wall-clock and burns the entire cycle; never produces useful output. |
+| `timeout 5 bash -c ""` (empty command) | Zero-effect probe, recon-scope-creep tell. |
+| Long pipelines without `set -o pipefail` | Failures hide behind the last successful command. |
+| Implicit-shell loops over network targets without per-iteration timeout | One slow host blocks all the others. |
+
+### Preferred pattern — Python heredoc with explicit timeouts
+
+```bash
+python3 - <<'PY'
+import requests, sys
+r = requests.get("https://<TARGET>/path", timeout=5)
+print(r.status_code, len(r.content))
+PY
+```
+
+For parallel work, use `concurrent.futures.ThreadPoolExecutor` (bounded `max_workers`, every call carries `timeout=5`) instead of bash `&`. For repeated probes, write a tight `python3 -c` one-liner with an explicit total wall-clock cap. Every network call MUST set a timeout. Every loop MUST be bounded.
+
+### Raw-socket / long-running probe discipline
+
+Raw-socket probes (HTTP request smuggling, custom protocol fuzzers, bespoke TLS handshakes) are the most common silent-stall surface in this sandbox — `socket.recv()` defaults to BLOCKING FOREVER. Treat every raw-socket script as untrusted until the rules below hold.
+
+| Rule | Why |
+|------|-----|
+| `sock.settimeout(5)` BEFORE `connect` AND BEFORE EACH `recv` | `socket.create_connection(timeout=...)` only covers connect; without `settimeout` after, recv blocks forever. |
+| Outer wall: `timeout 60 python3 -c '...'` even when inner timeouts are set | The inner timeout can lose to a kernel-level wedge, slow-loris peer, or buffered TLS state. Hard wall is mandatory. |
+| `python3 -u` (or `sys.stdout.flush()` after each write) | Without `-u`, a wedged process can leave stdout buffered — you see "no output" and assume hang when the script is actually finishing. |
+| Bounded iteration count — break on empty `recv`, or after N bytes / N rounds | `while True: data = s.recv(4096)` against a keep-alive socket never terminates. |
+| Prefer inline `python3 -c` over `cat > script.py && python3 script.py` | Inline keeps the harness in the tool transcript. The cat-then-run pattern hides what was executed and complicates re-runs. |
+| Bash-session wedge signature: 3+ consecutive empty-command polls | Means the previous tool call wedged the shell. Open a NEW bash session, `pkill -9 -f <script>`, do NOT keep polling the old one — polling a wedged shell will not unwedge it. |
+
+### Wedged-shell recovery, in order
+
+1. Open a fresh bash session (do not reuse the wedged one).
+2. `pkill -9 -f <script-name-or-pattern>` to free the wedged process.
+3. Verify the output file exists and has bytes: `ls -la <output_file>`. Empty (0 bytes) = wedged in network I/O before any flush.
+4. Switch variant OR rewrite with both `sock.settimeout(5)` and `timeout 60` outer wall before retrying.
+
+### Tmux pipe degradation detector
+
+When a probe is launched in a tmux session and its stdout is redirected to a file (`python3 detector.py > /tmp/log 2>&1 &`, `tmux send-keys '... > /tmp/log' Enter`), the tmux pipe between the running process and the log file can degrade silently — the process keeps running, `ps` shows the PID alive, but every byte it writes is discarded by the broken pipe. From the operator side this looks IDENTICAL to "the script is still working".
+
+**Detection signature** (all three conditions hold at the same time):
+- The script's PID is alive (`ps -p <PID>` returns 0).
+- `cat /tmp/log` returns empty bytes across **2 consecutive `sleep 30` polls** (60s total of zero new output).
+- The script SHOULD have produced at least one line by now (it has progress logging, a banner, a heartbeat, etc.).
+
+If all three hold, the tmux pipe is broken. Do NOT keep waiting — keep waiting will continue to return empty forever.
+
+**Recovery, in order:**
+
+1. Open a NEW bash session (e.g. tag it `<challenge>_recovery` so the original tmux name does not collide).
+2. `pkill -9 -f <script>` AND `rm -f /tmp/log` AND `tmux kill-session -t main 2>/dev/null` (the `2>/dev/null` covers the no-such-session case so the recovery does not error out before the next step).
+3. Re-launch the same probe **inline** — `timeout 60 python3 -u -c '<inlined harness>' 2>&1 | tee log.txt` — bypassing tmux entirely. Inline `python3 -u -c` writes to the tool's stdout, which the harness sees directly.
+4. If the inline run produces no output within 60 s, the issue is NOT tmux degradation but a real wedge in the harness itself. Escalate via `update_objective(status="blocked", reason="sandbox tmux pipe degradation: inline retry also produced no output in 60s")`.
+
+### Diagnostic ladder
+
+| Symptom | Cause | Recovery |
+|---------|-------|----------|
+| `ps -p <PID>` alive, `/tmp/log` empty across 2× 30 s polls, script has progress logging | Tmux pipe degradation (writes silently dropped) | New session, pkill + rm log + tmux kill-session, switch to inline `timeout 60 python3 -u -c '...' \| tee log.txt`. |
+| `ps -p <PID>` dead, `/tmp/log` empty | Process crashed before first flush (likely import error or syntax error) | `python3 -c '<harness>'` directly to surface the traceback (no `&`, no log redirect). Fix syntax, retry. |
+| `ps -p <PID>` alive, `/tmp/log` has bytes but stops growing | Network wedge (no `sock.settimeout`, slow-loris peer, or sandbox throttling) | Apply Wedged-shell recovery above. Add `sock.settimeout(5)` before connect AND each recv. Outer `timeout 60`. |
+| 3+ consecutive empty-command polls (`""`, `echo`, `pwd`) on the SAME shell session | The previous tool call wedged the shell stdin/stdout pump | Open a fresh bash session immediately. Polling the wedged shell will not unwedge it. |
+
 ## Workflow Commands
 
 | User Says | Action |

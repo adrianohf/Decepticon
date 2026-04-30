@@ -277,14 +277,27 @@ class LLMFactory:
         ]
 
     def _create_chat_model(self, model: str, temperature: float) -> BaseChatModel:
-        return _ProxiedChatOpenAI(
-            model=model,
-            base_url=self._proxy.url,
-            api_key=self._proxy.api_key,
-            temperature=temperature,
-            timeout=self._proxy.timeout,
-            max_retries=self._proxy.max_retries,
-        )
+        """Create a proxied ChatOpenAI instance routed through LiteLLM proxy.
+
+        Claude Opus 4.7+ via the Claude Code OAuth path (`auth/*`) returns a
+        400 invalid_request_error when `temperature` is set — the model is
+        wired to extended-thinking defaults. Use ChatOpenAI's `disabled_params`
+        to drop the field from the OpenAI request payload entirely (just
+        omitting our own kwarg is not enough — ChatOpenAI fills in its own
+        default temperature when the field is unset).
+        """
+        kwargs: dict[str, object] = {
+            "model": model,
+            "base_url": self._proxy.url,
+            "api_key": self._proxy.api_key,
+            "timeout": self._proxy.timeout,
+            "max_retries": self._proxy.max_retries,
+        }
+        if model.startswith("auth/") and "opus" in model:
+            kwargs["disabled_params"] = {"temperature": None}
+        else:
+            kwargs["temperature"] = temperature
+        return _ProxiedChatOpenAI(**kwargs)
 
     async def health_check(self) -> bool:
         """Check if the LiteLLM proxy is reachable."""
