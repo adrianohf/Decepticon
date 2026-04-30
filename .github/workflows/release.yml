@@ -114,15 +114,36 @@ jobs:
           format: cyclonedx-json
           output-file: sbom-${{ matrix.image }}.cdx.json
 
+      # Retry with backoff because the public Sigstore Rekor (rekor.sigstore.dev)
+      # has intermittent outages that hit `cosign attest` faster than its 4
+      # internal attempts can absorb. The image is already signed by the
+      # previous step and the SBOM file is uploaded as an artifact below;
+      # if all retries fail we emit a workflow warning and continue so a
+      # transparency-log degradation does not block a release.
       - name: Attest SBOM with cosign
         env:
           COSIGN_EXPERIMENTAL: "true"
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          cosign attest --yes \
-            --predicate sbom-${{ matrix.image }}.cdx.json \
-            --type cyclonedx \
-            "ghcr.io/purpleailab/${{ matrix.image }}@${DIGEST}"
+          set -uo pipefail
+          target="ghcr.io/purpleailab/${{ matrix.image }}@${DIGEST}"
+          predicate="sbom-${{ matrix.image }}.cdx.json"
+          for attempt in 1 2 3 4 5; do
+            echo "Attestation attempt ${attempt}/5 for ${target}"
+            if cosign attest --yes \
+                --predicate "${predicate}" \
+                --type cyclonedx \
+                "${target}"; then
+              echo "Attestation succeeded on attempt ${attempt}."
+              exit 0
+            fi
+            if [ "${attempt}" -lt 5 ]; then
+              delay=$((30 * attempt))
+              echo "Attestation attempt ${attempt} failed; sleeping ${delay}s..."
+              sleep "${delay}"
+            fi
+          done
+          echo "::warning title=SBOM attestation skipped::cosign attest failed after 5 retries (Sigstore Rekor unavailable). Image is signed and SBOM artifact uploaded; transparency-log entry for the SBOM is missing and can be re-attested manually."
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
@@ -246,15 +267,31 @@ jobs:
           format: cyclonedx-json
           output-file: sbom-decepticon-web.cdx.json
 
+      # Same retry+warning policy as the matrix attest step above; see comment there.
       - name: Attest SBOM with cosign
         env:
           COSIGN_EXPERIMENTAL: "true"
           DIGEST: ${{ steps.manifest.outputs.digest }}
         run: |
-          cosign attest --yes \
-            --predicate sbom-decepticon-web.cdx.json \
-            --type cyclonedx \
-            "ghcr.io/purpleailab/decepticon-web@${DIGEST}"
+          set -uo pipefail
+          target="ghcr.io/purpleailab/decepticon-web@${DIGEST}"
+          predicate="sbom-decepticon-web.cdx.json"
+          for attempt in 1 2 3 4 5; do
+            echo "Attestation attempt ${attempt}/5 for ${target}"
+            if cosign attest --yes \
+                --predicate "${predicate}" \
+                --type cyclonedx \
+                "${target}"; then
+              echo "Attestation succeeded on attempt ${attempt}."
+              exit 0
+            fi
+            if [ "${attempt}" -lt 5 ]; then
+              delay=$((30 * attempt))
+              echo "Attestation attempt ${attempt} failed; sleeping ${delay}s..."
+              sleep "${delay}"
+            fi
+          done
+          echo "::warning title=SBOM attestation skipped::cosign attest failed after 5 retries (Sigstore Rekor unavailable). Image is signed and SBOM artifact uploaded; transparency-log entry for the SBOM is missing and can be re-attested manually."
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
