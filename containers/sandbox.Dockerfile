@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Pin digest for reproducible builds and stable GHA cache layers.
 # To update: docker pull kalilinux/kali-rolling:latest && docker inspect --format='{{index .RepoDigests 0}}' kalilinux/kali-rolling:latest
-FROM kalilinux/kali-rolling@sha256:a3849f99f9f187122de4822341c49e55d250a771f2dbc5cfd56a146017e0e6ae
+FROM kalilinux/kali-rolling@sha256:ab7f9873e9d976d62f59e172350604dd980339f567bfb2eaa5c2bdfaa2dc42b7
 
 # Consolidated package install — one RUN layer to maximize cache hits
 # and minimize image size. Kali apt sandbox disabled so it doesn't fail
