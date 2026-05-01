@@ -13,15 +13,19 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import io
 import logging
+import os
 import re
 import subprocess
 import tarfile
 import tempfile
 import threading
 import time
+from collections.abc import Callable
+from typing import ClassVar
 
 from deepagents.backends.protocol import (
     ExecuteResponse,
@@ -41,13 +45,10 @@ def _docker_cfg():
     return load_config().docker
 
 
-# ─── Constants ───────────────────────────────────────────────────────────
+# ─── Tunable timing constants (patched in tests) ────────────────────────
 
 PS1_PATTERN = re.compile(r"\[DCPTN:(\d+):(.+?)\]")
 
-# Backwards-compatible module-level defaults. Code that reads these at
-# import time gets the hardcoded values; runtime code should prefer
-# _docker_cfg().<field> to pick up env-var overrides.
 POLL_INTERVAL: float = 0.5
 STALL_SECONDS: float = 3.0
 MAX_OUTPUT_CHARS: int = 30_000
@@ -184,8 +185,16 @@ class TmuxSessionManager:
         time.sleep(0.2)
 
         if not session_exists:
-            log_path = f"/tmp/.dcptn_log_{self.session}"
+            log_path = f"/workspace/.sessions/{self.session}.log"
             try:
+                # Idempotent — the directory is bind-mounted to the host so
+                # operators can tail the same file the agent reads.
+                subprocess.run(
+                    ["docker", "exec", self._container, "mkdir", "-p", "/workspace/.sessions"],
+                    capture_output=True,
+                    timeout=5,
+                    check=True,
+                )
                 self._docker_tmux(
                     [
                         "pipe-pane",
@@ -195,8 +204,8 @@ class TmuxSessionManager:
                         f"cat >> {log_path}",
                     ]
                 )
-            except Exception:
-                pass  # pipe-pane is optional
+            except Exception as e:
+                log.warning("pipe-pane setup failed for session '%s': %s", self.session, e)
 
         with TmuxSessionManager._init_lock:
             TmuxSessionManager._initialized.add(self.session)
@@ -229,14 +238,20 @@ class TmuxSessionManager:
                 try:
                     self.initialize()
                     baseline = self._capture()
-                except RuntimeError as retry_err:
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as retry_err:
                     return (
                         f"[ERROR] Session recovery failed: {retry_err}\n"
-                        f"The tmux session was destroyed (likely by pkill/killall). "
+                        f"The tmux session was destroyed or docker is overloaded. "
                         f"Try using a different session name."
                     )
             else:
                 return f"[ERROR] Sandbox error: {e}"
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return (
+                f"[ERROR] Sandbox capture failed: {e}\n"
+                f"docker exec timed out or the tmux session is hung. "
+                f'Retry, or terminate with bash_kill(session="{self.session}").'
+            )
 
         initial_count = len(PS1_PATTERN.findall(baseline))
 
@@ -249,11 +264,11 @@ class TmuxSessionManager:
             else:
                 self._send(command, enter=True)
 
-        start = time.time()
+        start = time.monotonic()
         prev_screen = baseline
         last_change_time = start
 
-        while time.time() - start < timeout:
+        while time.monotonic() - start < timeout:
             time.sleep(POLL_INTERVAL)
             try:
                 screen = self._capture()
@@ -266,12 +281,20 @@ class TmuxSessionManager:
                         f"The command likely killed the shell process (e.g. pkill bash).\n"
                         f"Session will auto-recover on next bash() call."
                     )
+                # Other RuntimeError — keep polling, reset stall timer
+                log.debug("transient RuntimeError in poll loop: %s", poll_err)
+                last_change_time = time.monotonic()
+                continue
+            except (OSError, subprocess.TimeoutExpired) as poll_err:
+                # docker exec stall — keep polling, do not let it trigger stall detection
+                log.debug("transient capture error in poll loop: %s", poll_err)
+                last_change_time = time.monotonic()
                 continue
 
             current_count = len(PS1_PATTERN.findall(screen))
 
             if current_count > initial_count:
-                output, exit_code, cwd = _extract_output(screen, command, initial_count)
+                output, exit_code, cwd = _extract_output(screen, command)
                 log.info("Command completed: exit=%s cwd=%s [%s]", exit_code, cwd, command[:50])
                 self._clear_screen()
                 result = _truncate(output).strip()
@@ -307,12 +330,12 @@ class TmuxSessionManager:
             # output) but hasn't changed for STALL_SECONDS, the program is likely
             # waiting for input (interactive prompt like msf6>, sliver>).
             if screen != prev_screen:
-                last_change_time = time.time()
+                last_change_time = time.monotonic()
                 prev_screen = screen
-            elif screen != baseline and time.time() - last_change_time >= STALL_SECONDS:
+            elif screen != baseline and time.monotonic() - last_change_time >= STALL_SECONDS:
                 log.info(
                     "Stall detected after %.1fs — interactive program [%s]",
-                    time.time() - start,
+                    time.monotonic() - start,
                     command[:50],
                 )
                 output = _extract_interactive_output(screen, baseline)
@@ -325,7 +348,7 @@ class TmuxSessionManager:
         # Full timeout — include screen capture
         try:
             final_screen = self._capture()
-        except RuntimeError:
+        except (RuntimeError, OSError, subprocess.TimeoutExpired):
             final_screen = ""
         screen_tail = final_screen.strip().split("\n")[-20:]
         screen_preview = "\n".join(screen_tail)
@@ -333,8 +356,8 @@ class TmuxSessionManager:
         return (
             f"[TIMEOUT] Command exceeded {timeout}s limit.\n"
             f"Session '{self.session}' is still running. "
-            f'To interact with it, use: bash(command="<input>", is_input=True, session="{self.session}")\n'
-            f'To read its current output: bash(command="", session="{self.session}")\n'
+            f'Send input with bash(command="<input>", is_input=True, session="{self.session}").\n'
+            f'Read partial output with bash_output(session="{self.session}").\n'
             f"--- screen preview ---\n{screen_preview}"
         )
 
@@ -343,12 +366,22 @@ class TmuxSessionManager:
         command: str,
         is_input: bool,
         timeout: int,
+        on_auto_background: Callable[[str, str], None] | None = None,
     ) -> str:
         """Async version of execute() — non-blocking subprocess + cancellable polling.
 
         All subprocess calls are offloaded via asyncio.to_thread() to avoid blocking
         the ASGI event loop. asyncio.sleep() between polls allows CancelledError
         delivery when LangGraph cancels a run (Ctrl+C → cancelMany).
+
+        Args:
+            command: shell command to send (or empty / control sequence with is_input).
+            is_input: True when ``command`` is keystrokes for an already-running process.
+            timeout: max seconds to wait for command completion.
+            on_auto_background: optional callback ``(command, baseline) -> None`` invoked
+                exactly once when the auto-background threshold is crossed. ``baseline``
+                is the screen capture taken before the command was sent — callers use it
+                to derive a stable PS1-marker baseline (e.g. via PS1_PATTERN.findall).
         """
         if not is_input:
             await asyncio.to_thread(self.initialize)
@@ -364,14 +397,20 @@ class TmuxSessionManager:
                 try:
                     await asyncio.to_thread(self.initialize)
                     baseline = await asyncio.to_thread(self._capture)
-                except RuntimeError as retry_err:
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as retry_err:
                     return (
                         f"[ERROR] Session recovery failed: {retry_err}\n"
-                        f"The tmux session was destroyed (likely by pkill/killall). "
+                        f"The tmux session was destroyed or docker is overloaded. "
                         f"Try using a different session name."
                     )
             else:
                 return f"[ERROR] Sandbox error: {e}"
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return (
+                f"[ERROR] Sandbox capture failed: {e}\n"
+                f"docker exec timed out or the tmux session is hung. "
+                f'Retry, or terminate with bash_kill(session="{self.session}").'
+            )
 
         initial_count = len(PS1_PATTERN.findall(baseline))
 
@@ -386,11 +425,11 @@ class TmuxSessionManager:
             else:
                 await asyncio.to_thread(self._send, command, True)
 
-        start = time.time()
+        start = time.monotonic()
         prev_screen = baseline
         last_change_time = start
 
-        while time.time() - start < timeout:
+        while time.monotonic() - start < timeout:
             await asyncio.sleep(POLL_INTERVAL)  # CancelledError delivered here
             try:
                 screen = await asyncio.to_thread(self._capture)
@@ -403,12 +442,20 @@ class TmuxSessionManager:
                         f"The command likely killed the shell process (e.g. pkill bash).\n"
                         f"Session will auto-recover on next bash() call."
                     )
+                # Other RuntimeError — keep polling, reset stall timer
+                log.debug("transient RuntimeError in poll loop: %s", poll_err)
+                last_change_time = time.monotonic()
+                continue
+            except (OSError, subprocess.TimeoutExpired) as poll_err:
+                # docker exec stall — keep polling, do not let it trigger stall detection
+                log.debug("transient capture error in poll loop: %s", poll_err)
+                last_change_time = time.monotonic()
                 continue
 
             current_count = len(PS1_PATTERN.findall(screen))
 
             if current_count > initial_count:
-                output, exit_code, cwd = _extract_output(screen, command, initial_count)
+                output, exit_code, cwd = _extract_output(screen, command)
                 log.info("Command completed: exit=%s cwd=%s [%s]", exit_code, cwd, command[:50])
                 await asyncio.to_thread(self._clear_screen)
                 result = _truncate(output).strip()
@@ -443,7 +490,7 @@ class TmuxSessionManager:
                 )
 
             # Auto-background: convert blocking commands after threshold
-            elapsed = time.time() - start
+            elapsed = time.monotonic() - start
             if elapsed >= AUTO_BACKGROUND_SECONDS and command:
                 log.info(
                     "Auto-backgrounding after %.0fs [%s] in session '%s'",
@@ -451,6 +498,11 @@ class TmuxSessionManager:
                     command[:50],
                     self.session,
                 )
+                if on_auto_background is not None:
+                    try:
+                        on_auto_background(command, baseline)
+                    except Exception:
+                        log.exception("auto-background callback failed")
                 output = _extract_interactive_output(screen, baseline)
                 preview = _truncate(output).strip()
                 return (
@@ -458,18 +510,18 @@ class TmuxSessionManager:
                     f"in session '{self.session}'.\n"
                     f"--- partial output ---\n{preview[-1000:] if preview else '(no output yet)'}\n"
                     f"--- end ---\n"
-                    f"Do productive work NOW. Check later: "
-                    f'bash(command="", session="{self.session}")'
+                    f"You will be notified when it completes. Inspect early progress: "
+                    f'bash_output(session="{self.session}").'
                 )
 
             # Stall detection (see sync execute() for rationale)
             if screen != prev_screen:
-                last_change_time = time.time()
+                last_change_time = time.monotonic()
                 prev_screen = screen
-            elif screen != baseline and time.time() - last_change_time >= STALL_SECONDS:
+            elif screen != baseline and time.monotonic() - last_change_time >= STALL_SECONDS:
                 log.info(
                     "Stall detected after %.1fs — interactive program [%s]",
-                    time.time() - start,
+                    time.monotonic() - start,
                     command[:50],
                 )
                 output = _extract_interactive_output(screen, baseline)
@@ -482,7 +534,7 @@ class TmuxSessionManager:
         # Full timeout — include screen capture
         try:
             final_screen = await asyncio.to_thread(self._capture)
-        except RuntimeError:
+        except (RuntimeError, OSError, subprocess.TimeoutExpired):
             final_screen = ""
         screen_tail = final_screen.strip().split("\n")[-20:]
         screen_preview = "\n".join(screen_tail)
@@ -490,15 +542,22 @@ class TmuxSessionManager:
         return (
             f"[TIMEOUT] Command exceeded {timeout}s limit.\n"
             f"Session '{self.session}' is still running. "
-            f'To interact with it, use: bash(command="<input>", is_input=True, session="{self.session}")\n'
-            f'To read its current output: bash(command="", session="{self.session}")\n'
+            f'Send input with bash(command="<input>", is_input=True, session="{self.session}").\n'
+            f'Read partial output with bash_output(session="{self.session}").\n'
             f"--- screen preview ---\n{screen_preview}"
         )
 
     def read_screen(self) -> str:
         """Read current screen without sending any command."""
-        self.initialize()
-        screen = self._capture()
+        try:
+            self.initialize()
+            screen = self._capture()
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            return (
+                f"[ERROR] Could not read screen for session '{self.session}': {e}\n"
+                f"The tmux session may be hung or docker is overloaded. "
+                f'Retry, or terminate the session with bash_kill(session="{self.session}").'
+            )
         matches = list(PS1_PATTERN.finditer(screen))
         if matches:
             last = matches[-1]
@@ -533,7 +592,7 @@ def _extract_interactive_output(screen: str, baseline: str) -> str:
     return "\n".join(new_lines) if new_lines else screen.strip()
 
 
-def _extract_output(screen: str, command: str, initial_count: int) -> tuple[str, int, str]:
+def _extract_output(screen: str, command: str) -> tuple[str, int, str]:
     matches = list(PS1_PATTERN.finditer(screen))
     if not matches:
         return screen, -1, ""
@@ -573,6 +632,83 @@ def _truncate(text: str) -> str:
     )
 
 
+# ─── Background job tracking ─────────────────────────────────────────────
+
+
+@dataclasses.dataclass
+class BackgroundJob:
+    """Metadata for one background command in a tmux session.
+
+    A session holds at most one BackgroundJob — sequential reuse replaces.
+    Timestamps use ``time.monotonic()`` so elapsed values stay correct
+    across wall-clock adjustments (NTP step, manual ``date -s``).
+    """
+
+    session: str
+    command: str
+    initial_markers: int
+    started_at: float
+    status: str = "running"  # running | done
+    exit_code: int | None = None
+    completed_at: float | None = None
+    consumed: bool = False
+
+    @property
+    def elapsed(self) -> float:
+        end = self.completed_at if self.completed_at is not None else time.monotonic()
+        return end - self.started_at
+
+
+class BackgroundJobTracker:
+    """In-memory background-job registry keyed by session name."""
+
+    def __init__(self) -> None:
+        self._jobs: dict[str, BackgroundJob] = {}
+        self._lock = threading.RLock()
+
+    def register(self, session: str, command: str, initial_markers: int) -> BackgroundJob:
+        with self._lock:
+            job = BackgroundJob(
+                session=session,
+                command=command,
+                initial_markers=initial_markers,
+                started_at=time.monotonic(),
+            )
+            self._jobs[session] = job
+            return job
+
+    def get(self, session: str) -> BackgroundJob | None:
+        with self._lock:
+            return self._jobs.get(session)
+
+    def mark_complete(self, session: str, exit_code: int) -> None:
+        with self._lock:
+            job = self._jobs.get(session)
+            if job is None or job.status != "running":
+                return
+            job.status = "done"
+            job.exit_code = exit_code
+            job.completed_at = time.monotonic()
+
+    def mark_consumed(self, session: str) -> None:
+        with self._lock:
+            job = self._jobs.get(session)
+            if job is not None:
+                job.consumed = True
+
+    def pending_completions(self) -> list[BackgroundJob]:
+        with self._lock:
+            return [j for j in self._jobs.values() if j.status == "done" and not j.consumed]
+
+    def all_jobs(self) -> list[BackgroundJob]:
+        with self._lock:
+            return list(self._jobs.values())
+
+    def remove(self, session: str) -> None:
+        with self._lock:
+            self._jobs.pop(session, None)
+
+
 # ─── DockerSandbox ────────────────────────────────────────────────────────
 
 
@@ -585,7 +721,18 @@ class DockerSandbox(BaseSandbox):
 
     The bash tool uses execute_tmux() for persistent tmux sessions that
     support interactive input.
+
+    ``_jobs`` and ``_log_offsets`` are class-level so every agent factory
+    in a process talks to the same background-job tracker — the bash tool
+    (which reads a module-global ``_sandbox`` set by whichever factory ran
+    last) and the SandboxNotificationMiddleware (bound to a different
+    instance per agent) would otherwise see disjoint trackers and
+    completion notifications would never fire.
     """
+
+    _jobs: ClassVar[BackgroundJobTracker] = BackgroundJobTracker()
+    _log_offsets: ClassVar[dict[str, int]] = {}
+    _log_offsets_lock: ClassVar[threading.RLock] = threading.RLock()
 
     def __init__(
         self,
@@ -595,11 +742,13 @@ class DockerSandbox(BaseSandbox):
         self._container_name = container_name
         self._default_timeout = default_timeout
         self._managers: dict[str, TmuxSessionManager] = {}
+        self._managers_lock = threading.RLock()
 
     def _get_manager(self, session: str) -> TmuxSessionManager:
-        if session not in self._managers:
-            self._managers[session] = TmuxSessionManager(session, self._container_name)
-        return self._managers[session]
+        with self._managers_lock:
+            if session not in self._managers:
+                self._managers[session] = TmuxSessionManager(session, self._container_name)
+            return self._managers[session]
 
     # ── BaseSandbox abstract methods ──────────────────────────────────────
 
@@ -650,8 +799,6 @@ class DockerSandbox(BaseSandbox):
                 )
                 error = None if result.returncode == 0 else "file_not_found"
             finally:
-                import os
-
                 os.unlink(tmp_path)
             responses.append(FileUploadResponse(path=path, error=error))
         return responses
@@ -684,6 +831,31 @@ class DockerSandbox(BaseSandbox):
                     FileDownloadResponse(path=path, content=None, error="file_not_found")
                 )
         return responses
+
+    def read_session_log_diff(self, session: str) -> str:
+        """Return new bytes appended to /workspace/.sessions/<session>.log
+        since the previous call (or the whole file on first call).
+
+        Per-process offset tracking only — restart resets to 0 (safe fallback).
+        File truncation/rotation also resets to 0.
+        """
+        log_path = f"/workspace/.sessions/{session}.log"
+        results = self.download_files([log_path])
+        if not results or results[0].error or results[0].content is None:
+            return ""
+        full = results[0].content
+        with self._log_offsets_lock:
+            prev_offset = self._log_offsets.get(session, 0)
+            if prev_offset > len(full):
+                prev_offset = 0
+            new_bytes = full[prev_offset:]
+            self._log_offsets[session] = len(full)
+        return new_bytes.decode("utf-8", errors="replace")
+
+    def reset_session_log_offset(self, session: str) -> None:
+        """Forget the read offset (used after kill / GC)."""
+        with self._log_offsets_lock:
+            self._log_offsets.pop(session, None)
 
     # ── Tmux execution (for bash tool) ───────────────────────────────────
 
@@ -731,21 +903,79 @@ class DockerSandbox(BaseSandbox):
         if not command and not is_input:
             return await asyncio.to_thread(mgr.read_screen)
 
+        def _on_auto_background(cmd: str, baseline: str) -> None:
+            self._jobs.register(
+                session,
+                command=cmd,
+                initial_markers=len(PS1_PATTERN.findall(baseline)),
+            )
+
         return await mgr.execute_async(
             command,
             is_input=is_input,
             timeout=effective,
+            on_auto_background=_on_auto_background,
         )
 
     def start_background(self, command: str, session: str = "main") -> None:
-        """Send a command to a tmux session without waiting for completion.
+        """Launch a command in a named tmux session without blocking.
 
-        The command runs in the named session and can be checked later via
-        execute_tmux(command="", session=...) or read_screen().
+        Registers a BackgroundJob keyed by the PS1-marker count at launch;
+        ``poll_completion`` later compares against this baseline.
         """
         mgr = self._get_manager(session)
         mgr.initialize()
+        baseline = mgr._capture()
+        initial_markers = len(PS1_PATTERN.findall(baseline))
+        self._jobs.register(session, command=command, initial_markers=initial_markers)
         mgr._send(command, enter=True)
+
+    def poll_completion(self, session: str) -> "BackgroundJob | None":
+        """Check whether a background job has produced a new PS1 marker.
+
+        Updates the tracker in place; returns the job (or None if not tracked).
+        Capture failures are swallowed — the job stays running, retried later.
+        """
+        job = self._jobs.get(session)
+        if job is None or job.status != "running":
+            return job
+        try:
+            mgr = self._get_manager(session)
+            screen = mgr._capture()
+        except (RuntimeError, OSError, subprocess.TimeoutExpired):
+            return job
+        markers = list(PS1_PATTERN.finditer(screen))
+        if len(markers) > job.initial_markers:
+            try:
+                exit_code = int(markers[-1].group(1))
+            except ValueError:
+                exit_code = -1
+            self._jobs.mark_complete(session, exit_code=exit_code)
+        return job
+
+    def kill_session(self, session: str) -> None:
+        """Send Ctrl+C, then kill the tmux session, then clear all caches.
+
+        Best-effort: errors are logged, not raised. The pipe-pane log file
+        is preserved at /workspace/.sessions/<session>.log for audit.
+        """
+        try:
+            mgr = self._get_manager(session)
+            try:
+                mgr._docker_tmux(["send-keys", "-t", session, "C-c"])
+            except RuntimeError as e:
+                log.debug("send-keys C-c failed for '%s': %s", session, e)
+            try:
+                mgr._docker_tmux(["kill-session", "-t", session])
+            except RuntimeError as e:
+                log.warning("kill-session failed for '%s': %s", session, e)
+        finally:
+            with self._managers_lock:
+                self._managers.pop(session, None)
+            with TmuxSessionManager._init_lock:
+                TmuxSessionManager._initialized.discard(session)
+            self.reset_session_log_offset(session)
+            self._jobs.remove(session)
 
 
 # ─── Pre-flight check ────────────────────────────────────────────────────

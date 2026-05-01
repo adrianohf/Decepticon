@@ -23,18 +23,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 import time
 
 from langchain_core.tools import tool
 
-from decepticon.backends.docker_sandbox import DockerSandbox
+from decepticon.backends.docker_sandbox import DockerSandbox, _interpret_exit_code
+
+log = logging.getLogger("decepticon.tools.bash.bash")
 
 _sandbox: DockerSandbox | None = None
 
-# ─── Multi-tier output thresholds (Claude Code best practice) ─────────────
-INLINE_LIMIT = 15_000  # ≤15K chars: return directly in tool result
-OFFLOAD_THRESHOLD = 100_000  # 15K–100K: save to file, return summary + preview
+# ─── Output size thresholds ──────────────────────────────────────────────
+INLINE_LIMIT = 15_000  # ≤15K chars: return inline; >15K: offload to /workspace/.scratch/
 # >5M: size watchdog in docker_sandbox.py kills the command (SIZE_WATCHDOG_CHARS)
 
 # ─── Scratch-file TTL prune (bounds /workspace/.scratch/ growth) ──────────
@@ -148,8 +150,8 @@ async def _prune_old_scratch() -> None:
             "-delete 2>/dev/null || true",
             timeout=5,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("scratch prune failed: %s", e)
 
 
 async def _offload_large_output(output: str, command: str, session: str) -> str:
@@ -194,55 +196,22 @@ async def bash(
     background: bool = False,
     description: str = "",
 ) -> str:
-    """Execute a bash command inside the isolated Docker sandbox (Kali Linux).
+    """Execute a bash command in a persistent tmux session inside the Docker sandbox.
 
-    WHAT: Runs shell commands in a persistent tmux session inside the Docker container.
-    Each session maintains state (cwd, env vars, background processes) across calls.
-    Long-running commands (>60s) are automatically converted to background mode —
-    the agent can continue working and check results later.
-
-    WHEN TO USE:
-    - Running recon tools: nmap, dig, whois, subfinder, curl, netcat
-    - File operations inside sandbox: cat, ls, grep on /workspace files
-    - Installing missing packages: apt-get install -y <pkg>
-    - Checking a parallel session: bash(command="", session="scan-1")
-
-    RETURNS:
-    - Command output (stdout). On failure, exit code + semantic hint appended
-      (e.g., "Exit code: 127 — command not found").
-    - For large outputs (>100K chars): auto-saved to /workspace/.scratch/ with
-      preview returned. Use read_file or grep to access full content.
-    - [BACKGROUND]: Command started in session. Do NOT check immediately — do other work first.
-    - [AUTO-BACKGROUND]: Command was running >60s and auto-converted to background.
-      Check later with bash(command="", session="<name>").
-    - [SIZE LIMIT]: Output exceeded 5M chars; command was interrupted.
-      Redirect output to a file: command > /workspace/output.txt
-    - [TIMEOUT]: Session is now OCCUPIED. Use a DIFFERENT session for new commands.
-    - [IDLE]: Session ready, no running process (when checking a session with empty command).
-    - [RUNNING]: Session has active output (when checking a session with empty command).
-
-    ERROR RECOVERY:
-    - [TIMEOUT] → Session occupied. Use a different session name for new commands.
-      Check the timed-out session later: bash(command="", session="<same>")
-    - Exit code 126 → Permission denied. Try with sudo or check file path
-    - Exit code 127 → Command not found. Install: apt-get install -y <pkg>
-    - Exit code 137 → Process killed (OOM or size limit). Redirect output to file
+    See the <BASH_TOOLS> system-prompt block for tool semantics, return-value
+    taxonomy, and exit-code hints — this docstring covers parameters only.
 
     Args:
-        command: Shell command to execute. Leave empty to read current screen output of the session.
-        is_input: ONLY set True when a PREVIOUS command in this session is waiting for input.
-            Use for: interactive responses ('y', 'n'), passwords, or control signals ('C-c', 'C-z', 'C-d').
-            NEVER set True when starting a new command.
-        session: Tmux session name for parallel execution. Example: session="scan-1" and session="scan-2"
-            run two scans concurrently. Default "main" for sequential work.
-        timeout: Max seconds to wait for command completion (default 120). Increase for long scans.
-            Note: commands running >60s may be auto-backgrounded regardless of this value.
-        background: Set True to start a long-running command without waiting for completion.
-            The command runs in the named session. Check results later with bash(session="<name>").
-            ALWAYS use a dedicated session name (not "main") with background=True.
-            Example: bash(command="nmap -sV target", session="nmap", background=True)
-        description: Short activity description for UI display (e.g., "Scanning target ports").
-            Optional — helps operators monitor agent activity in real-time.
+        command: Shell command. Leave empty to read current screen output of the session.
+        is_input: Set True ONLY when an existing command in this session is waiting
+            for input (interactive prompt, password, or control sequence like
+            'C-c' / 'C-z' / 'C-d'). Never True when starting a new command.
+        session: Tmux session name. Different names run in parallel; same name shares cwd.
+        timeout: Max seconds to wait for completion (default 120). Commands exceeding
+            60s are auto-backgrounded regardless.
+        background: Start a long-running command without waiting. Use a dedicated
+            session name (not "main"). Check results later with bash_output.
+        description: Short label for UI display.
     """
     if _sandbox is None:
         raise RuntimeError("DockerSandbox not initialized. Call set_sandbox() first.")
@@ -255,11 +224,9 @@ async def bash(
         await asyncio.to_thread(_sandbox.start_background, command=command, session=session)
         return (
             f"[BACKGROUND] Command started in session '{session}'.\n"
-            f"Do NOT check this session or sleep-wait. Instead, do productive work NOW:\n"
-            f"  - Run quick commands (curl, dig, whois) on 'main' session\n"
-            f"  - Enumerate services on already-discovered ports\n"
-            f"  - Read skill files or analyze existing findings\n"
-            f'Check later: bash(command="", session="{session}")'
+            f"Do NOT poll — you will be notified when it completes.\n"
+            f"Do productive work NOW (curl/dig/whois on 'main', enumerate other targets, etc).\n"
+            f'Inspect early progress with bash_output(session="{session}").'
         )
 
     result = await _sandbox.execute_tmux_async(
@@ -280,3 +247,99 @@ async def bash(
         return await _offload_large_output(result, command, session)
 
     return result
+
+
+@tool
+async def bash_output(session: str = "main") -> str:
+    """Retrieve new output from a sandbox session since the last call.
+
+    WHEN TO USE:
+    - After bash(..., background=True) to fetch progress or results.
+    - After receiving a <system-reminder> notification that a session completed.
+    - To re-read a session you've stepped away from while doing other work.
+
+    RETURNS:
+    - "[RUNNING elapsed=Ts] session=... command=...\\n<diff>"
+    - "[DONE exit=N elapsed=Ts] session=... command=...\\n<diff>"
+      (the DONE line is delivered ONCE — after this call the job is "consumed")
+    - "[IDLE] No background job in session 'X'."
+
+    Args:
+        session: Session name passed to bash(..., background=True).
+    """
+    if _sandbox is None:
+        raise RuntimeError("DockerSandbox not initialized.")
+
+    job = await asyncio.to_thread(_sandbox.poll_completion, session)
+    diff_raw = await asyncio.to_thread(_sandbox.read_session_log_diff, session)
+    diff = _sanitize_output(diff_raw) if diff_raw else ""
+
+    if job is None:
+        if diff:
+            return f"[IDLE] No background job in session '{session}'.\n{diff}"
+        return f"[IDLE] No background job in session '{session}'."
+
+    if job.status == "done":
+        _sandbox._jobs.mark_consumed(session)
+        hint = _interpret_exit_code(job.exit_code) if job.exit_code is not None else ""
+        body = diff if diff else "(no new output)"
+        return (
+            f"[DONE exit={job.exit_code}{hint} elapsed={job.elapsed:.1f}s] "
+            f"session='{session}' command='{job.command}'\n{body}"
+        )
+
+    body = diff if diff else "(no new output yet)"
+    return (
+        f"[RUNNING elapsed={job.elapsed:.1f}s] session='{session}' command='{job.command}'\n{body}"
+    )
+
+
+@tool
+async def bash_kill(session: str) -> str:
+    """Forcefully terminate a sandbox session.
+
+    Sends Ctrl+C, kills the tmux session, and clears local job tracking.
+    The pipe-pane log file is preserved at /workspace/.sessions/<session>.log.
+
+    Args:
+        session: Session name to terminate.
+    """
+    if _sandbox is None:
+        raise RuntimeError("DockerSandbox not initialized.")
+
+    await asyncio.to_thread(_sandbox.kill_session, session)
+    return (
+        f"[KILLED] session '{session}' terminated. "
+        f"Log preserved at /workspace/.sessions/{session}.log."
+    )
+
+
+@tool
+async def bash_status() -> str:
+    """List all known sandbox sessions with running and completed jobs.
+
+    Use before launching a new background job to spot conflicts, or to
+    detect stale sessions for cleanup.
+    """
+    if _sandbox is None:
+        raise RuntimeError("DockerSandbox not initialized.")
+
+    # Poll all known running jobs first, then take ONE snapshot for the table.
+    for job in _sandbox._jobs.all_jobs():
+        if job.status == "running":
+            await asyncio.to_thread(_sandbox.poll_completion, job.session)
+
+    jobs = _sandbox._jobs.all_jobs()
+    if not jobs:
+        return "[EMPTY] No tracked background jobs."
+
+    rows = ["session | status | elapsed | command", "--------+--------+---------+--------"]
+    for j in jobs:
+        if j.status == "running":
+            status = "running"
+        else:
+            status = f"done(exit={j.exit_code})"
+            if j.consumed:
+                status += " consumed"
+        rows.append(f"{j.session} | {status} | {j.elapsed:.1f}s | {j.command[:60]}")
+    return "\n".join(rows)

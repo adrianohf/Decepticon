@@ -20,6 +20,10 @@ Middleware stack (selected for orchestration):
   8. AnthropicPromptCachingMiddleware — cache system prompt for Anthropic models
   9. PatchToolCallsMiddleware — repair dangling tool calls
 
+The orchestrator has tools=[] — all offensive work goes through task()
+delegation to specialist sub-agents. SandboxNotificationMiddleware lives
+on each sub-agent (where bash actually runs), not here.
+
 OPPLAN replaces TodoListMiddleware with domain-specific objective tracking:
   - 5 CRUD tools following Claude Code's V2 Task tool patterns
   - Dynamic state injection: every LLM call sees OPPLAN progress table
@@ -51,7 +55,6 @@ from decepticon.middleware import (
     FilesystemMiddlewareNoExecute,
     OPPLANMiddleware,
 )
-from decepticon.tools.bash.bash import set_sandbox
 
 
 def create_decepticon_agent():
@@ -70,11 +73,12 @@ def create_decepticon_agent():
     llm = factory.get_model("decepticon")
     fallback_models = factory.get_fallback_models("decepticon")
 
-    # Build DockerSandbox — shared filesystem for all agents
+    # DockerSandbox here only backs FilesystemMiddlewareNoExecute (read/write
+    # engagement docs). The orchestrator has tools=[], so the bash module's
+    # global _sandbox is set by sub-agent factories when they execute.
     sandbox = DockerSandbox(
         container_name=config.docker.sandbox_container_name,
     )
-    set_sandbox(sandbox)
 
     system_prompt = load_prompt("decepticon")
 
