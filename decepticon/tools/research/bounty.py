@@ -137,9 +137,7 @@ def bounty_scope_check(
                 break
         if not domain_match:
             in_scope = False
-            warnings.append(
-                f"Target '{target}' does not match any in-scope domain: {domains}"
-            )
+            warnings.append(f"Target '{target}' does not match any in-scope domain: {domains}")
 
     # Severity-based warnings
     low_impact_classes = {"information-disclosure", "version-disclosure", "verbose-error"}
@@ -240,9 +238,7 @@ def format_bounty_report(
         return _json({"error": f"FINDING node {finding_id} not found in graph"})
 
     if finding.kind != NodeKind.FINDING:
-        return _json(
-            {"error": f"Node {finding_id} is {finding.kind.value}, not finding"}
-        )
+        return _json({"error": f"Node {finding_id} is {finding.kind.value}, not finding"})
 
     # Pull linked vulnerability
     vuln = _find_linked_vuln(graph, finding_id)
@@ -252,9 +248,7 @@ def format_bounty_report(
     vuln_props = vuln.props if vuln else {}
     validated = props.get("validated", False)
     if not validated:
-        return _json(
-            {"error": "Finding is not validated — run validate_finding first"}
-        )
+        return _json({"error": "Finding is not validated — run validate_finding first"})
 
     cvss_vector = vuln_props.get("cvss_vector", props.get("cvss_vector", ""))
     cvss_score = vuln_props.get("cvss_score", props.get("cvss_score", 0.0))
