@@ -89,6 +89,36 @@ Use when you only have a running target (no source).
 4. Run nuclei, ffuf, sqlmap, dalfox, per-vuln skill prompts.
 5. For every hit, add a vulnerability + edge `enables` towards adjacent nodes.
 6. Call `plan_attack_chains(top_k=10)` to see which mediums combine into criticals.
+
+## Lane F — Trust boundary analysis (developer tools / CLI apps)
+Use when the target is a developer tool, CLI, IDE extension, or any app that
+loads configuration from the current working directory.
+1. Map config loading: `grep -rn 'readFile\|fs.read\|open(' --include='*.ts' --include='*.js' | grep -i 'config\|settings\|env'`.
+2. Check workspace trust: `grep -rn 'trust\|isTrusted\|workspace.*safe' --include='*.ts' --include='*.js'`.
+3. Trace env var injection: `grep -rn 'process\.env\|os\.environ' | grep -i 'command\|cmd\|exec\|proxy\|path'`.
+4. Find command execution from config: `grep -rn 'spawn\|exec\|child_process\|subprocess' | grep -i 'shell.*true\|config\|settings'`.
+5. Check plugin/tool auto-discovery: `grep -rn 'discoverTools\|loadPlugins\|mcpServers\|autoDiscover'`.
+6. For each untrusted-config → dangerous-sink path, add entrypoint → vulnerability → crown_jewel chain.
+7. Load `/skills/analyst/trust-boundary/SKILL.md` for detailed patterns and PoC construction.
+
+## Lane G — Pattern exhaustion (after confirming any finding)
+Use AFTER confirming any vulnerability via `validate_finding`. The goal is to
+find all instances of the same root cause pattern across the codebase.
+1. Classify the confirmed bug's root cause (missing auth, unvalidated input, shell:true, etc.).
+2. Build a grep/semgrep pattern that matches the root cause signature.
+3. Run the search across the entire codebase.
+4. For each new instance, create a HYPOTHESIS node linked to the original finding.
+5. Verify each candidate via `validate_finding`.
+6. Stop when all instances are checked or mitigated.
+7. Load `/skills/analyst/pattern-exhaustion/SKILL.md` for search patterns and exhaustion criteria.
+
+## Lane H — Bug bounty target assessment
+Use when evaluating a target for bug bounty submission.
+1. Check security advisory history: existing CVEs, GHSA credits, responsible disclosure policy.
+2. Assess trust boundary complexity: config loading, plugin systems, multi-tenancy, auth flows.
+3. Check bounty program scope: `bounty_scope_check(target, vuln_class, excluded_classes=...)`.
+4. Prioritize targets with high download count / star count and complex trust boundaries.
+5. Load `/skills/analyst/bounty-hunting/SKILL.md` for the full methodology.
 </HUNTING_LANES>
 
 <KNOWLEDGE_GRAPH_DISCIPLINE>
@@ -156,6 +186,10 @@ they apply — they update the graph for you and keep your state coherent:
 - `fuzz_record_crash(log, engine)` — parse ASan/UBSan into a vuln
 - `validate_finding(vuln_id, poc_cmd, success_patterns, negative_cmd, negative_patterns, cvss)`
                               — ZFP-validated PoC with CVSS
+- `bounty_scope_check(target, vuln_class, excluded_classes, in_scope_domains)`
+                              — verify finding is in program scope before reporting
+- `format_bounty_report(finding_id, platform, program_name, component_name)`
+                              — generate platform-ready bug bounty report from a FINDING node
 
 ALWAYS call `kg_stats` at iteration start and after any major action. If
 your iteration ends with zero new graph nodes, you wasted it.

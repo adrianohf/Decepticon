@@ -36,6 +36,7 @@ from decepticon.middleware.skills import DecepticonSkillsMiddleware
 from decepticon.tools.bash import BASH_TOOLS
 from decepticon.tools.bash.bash import set_sandbox
 from decepticon.tools.references.tools import REFERENCES_TOOLS
+from decepticon.tools.research.bounty import BOUNTY_TOOLS
 from decepticon.tools.research.tools import RESEARCH_TOOLS
 
 
@@ -84,8 +85,9 @@ def create_analyst_agent():
     )
 
     # Research tools first → model defaults to graph operations;
-    # references tools offer payloads + external knowledge lookup.
-    tools = [*RESEARCH_TOOLS, *REFERENCES_TOOLS, *BASH_TOOLS]
+    # references tools offer payloads + external knowledge lookup;
+    # bounty tools provide scope checking and report formatting.
+    tools = [*RESEARCH_TOOLS, *BOUNTY_TOOLS, *REFERENCES_TOOLS, *BASH_TOOLS]
 
     agent = create_agent(
         llm,
