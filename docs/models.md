@@ -29,7 +29,7 @@ For each agent, Decepticon resolves a tier (from the profile) and walks your Aut
 | `google_api`          | `gemini/gemini-2.5-pro`                   | `gemini/gemini-2.5-flash`                     | `gemini/gemini-2.5-flash-lite`                |
 | `google_oauth`        | `gemini-sub/gemini-2.5-pro`               | `gemini-sub/gemini-2.5-flash`                 | — *(falls through)*                           |
 | `minimax_api`         | `minimax/MiniMax-M2.5`                    | `minimax/MiniMax-M2.5-lightning`              | — *(falls through)*                           |
-| `deepseek_api`        | `deepseek/deepseek-reasoner`              | `deepseek/deepseek-chat`                      | `deepseek/deepseek-chat`                      |
+| `deepseek_api`        | `deepseek/deepseek-v4-pro`                | `deepseek/deepseek-v4-flash`                   | `deepseek/deepseek-v4-flash`                   |
 | `xai_api`             | `xai/grok-3`                              | `xai/grok-3-mini`                             | — *(falls through)*                           |
 | `grok_oauth`          | `grok-sub/grok-3`                         | `grok-sub/grok-3-mini`                        | — *(falls through)*                           |
 | `mistral_api`         | `mistral/mistral-large-latest`            | `mistral/codestral-latest`                    | — *(falls through)*                           |

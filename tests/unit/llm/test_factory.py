@@ -54,7 +54,7 @@ class TestLLMFactory:
         assert names == [
             "openai/gpt-5-nano",
             "gemini/gemini-2.5-flash-lite",
-            "deepseek/deepseek-chat",
+            "deepseek/deepseek-v4-flash",
             "openrouter/anthropic/claude-haiku-4-5",
             "nvidia_nim/meta/llama-3.2-3b-instruct",
         ]
@@ -66,7 +66,7 @@ class TestLLMFactory:
             "openai/gpt-5.5",
             "gemini/gemini-2.5-pro",
             "minimax/MiniMax-M2.5",
-            "deepseek/deepseek-reasoner",
+            "deepseek/deepseek-v4-pro",
             "xai/grok-3",
             "mistral/mistral-large-latest",
             "openrouter/anthropic/claude-opus-4-7",
