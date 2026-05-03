@@ -8,12 +8,8 @@ backend.
 
 from __future__ import annotations
 
-import importlib
 import sys
 from unittest.mock import MagicMock
-
-import pytest
-
 
 # ── Stub heavy transitive imports ────────────────────────────────────────
 # ``decepticon.tools.research.bounty`` transitively pulls in
@@ -51,8 +47,8 @@ def _ensure_stubs() -> None:
 _ensure_stubs()
 
 from decepticon.tools.research.bounty import (  # noqa: E402
-    BOUNTY_TOOLS,
     _COMMONLY_EXCLUDED,
+    BOUNTY_TOOLS,
     _normalize_class,
     _severity_label,
 )

@@ -15,19 +15,16 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
 
 from langchain_core.tools import tool
 
 from decepticon.core.logging import get_logger
 from decepticon.tools.research._state import _json, _load, _save
 from decepticon.tools.research.graph import (
-    Edge,
     EdgeKind,
     KnowledgeGraph,
     Node,
     NodeKind,
-    Severity,
 )
 
 log = get_logger("research.bounty")
@@ -265,7 +262,6 @@ def format_bounty_report(
     cwe_list = vuln_props.get("cwe", [])
     file_path = vuln_props.get("file", "")
     line = vuln_props.get("line", "")
-    evidence = vuln_props.get("evidence", "")
     stdout = props.get("stdout_excerpt", "")
     vuln_label = vuln.label if vuln else finding.label
 
