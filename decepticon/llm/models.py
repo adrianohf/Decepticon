@@ -137,9 +137,9 @@ METHOD_MODELS: dict[AuthMethod, dict[Tier, str]] = {
         Tier.MID: "gemini-sub/gemini-2.5-flash",
     },
     AuthMethod.DEEPSEEK_API: {
-        Tier.HIGH: "deepseek/deepseek-reasoner",
-        Tier.MID: "deepseek/deepseek-chat",
-        Tier.LOW: "deepseek/deepseek-chat",
+        Tier.HIGH: "deepseek/deepseek-v4-pro",
+        Tier.MID: "deepseek/deepseek-v4-flash",
+        Tier.LOW: "deepseek/deepseek-v4-flash",
     },
     AuthMethod.XAI_API: {
         Tier.HIGH: "xai/grok-3",

@@ -116,6 +116,18 @@ model_list:
       model: auth/claude-haiku-4-5
 
   # ── DeepSeek ─────────────────────────────────────────────────────────
+  # V4 models (released 2026-04-24, 1M context, thinking + non-thinking)
+  - model_name: deepseek/deepseek-v4-pro
+    litellm_params:
+      model: deepseek/deepseek-v4-pro
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek/deepseek-v4-flash
+    litellm_params:
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # Legacy names (deprecated 2026-07-24, kept for fallback)
   - model_name: deepseek/deepseek-chat
     litellm_params:
       model: deepseek/deepseek-chat
@@ -304,7 +316,7 @@ litellm_settings:
     # MiniMax (no LOW tier)
     - {"minimax/MiniMax-M2.5": ["minimax/MiniMax-M2.5-lightning"]}
     # DeepSeek
-    - {"deepseek/deepseek-reasoner": ["deepseek/deepseek-chat"]}
+    - {"deepseek/deepseek-v4-pro": ["deepseek/deepseek-v4-flash"]}
     # xAI direct + SuperGrok subscription (no LOW tier on either)
     - {"xai/grok-3": ["xai/grok-3-mini"]}
     - {"grok-sub/grok-3": ["grok-sub/grok-3-mini"]}
