@@ -26,6 +26,7 @@ import contextlib
 import contextvars
 import hashlib
 import logging
+import os
 import re
 import time
 
@@ -140,7 +141,22 @@ def _workspace_path_from_config(config: RunnableConfig | None) -> str:
     configurable = (config or {}).get("configurable", {})
     workspace = configurable.get("workspace_path") if isinstance(configurable, dict) else None
     if isinstance(workspace, str) and workspace.startswith("/workspace"):
-        return DockerSandbox._normalize_workspace_path(workspace)
+        normalized = DockerSandbox._normalize_workspace_path(workspace)
+        if normalized != "/workspace":
+            return normalized
+
+    env_workspace = os.environ.get("DECEPTICON_WORKSPACE_PATH")
+    if env_workspace:
+        normalized = DockerSandbox._normalize_workspace_path(env_workspace)
+        if normalized != "/workspace":
+            return normalized
+
+    env_slug = os.environ.get("DECEPTICON_ENGAGEMENT")
+    if env_slug:
+        normalized = DockerSandbox._normalize_workspace_path(f"/workspace/{env_slug}")
+        if normalized != "/workspace":
+            return normalized
+
     return _current_workspace_path.get()
 
 
@@ -168,7 +184,7 @@ async def _prune_old_scratch(workspace_path: str = "/workspace") -> None:
     path pays for cleanup at most every ~10 minutes per process. Best-effort:
     a failure here must never block the agent's command.
     """
-    if _sandbox is None:
+    if _sandbox is None or workspace_path == "/workspace":
         return
     now = time.monotonic()
     if now - _scratch_prune_state.get(workspace_path, 0.0) < SCRATCH_PRUNE_INTERVAL:
@@ -199,6 +215,19 @@ async def _offload_large_output(
     - Agent can use read_file or grep to access specific parts later
     """
     assert _sandbox is not None
+
+    if workspace_path == "/workspace":
+        head_preview = output[:2000].strip()
+        tail_preview = output[-1000:].strip()
+        line_count = output.count("\n") + 1
+        char_count = len(output)
+        return (
+            f"{head_preview}\n\n"
+            f"[... {line_count} lines / {char_count} chars truncated. "
+            "No engagement workspace was available, so output was not written "
+            "to the root scratch directory. ...]\n\n"
+            f"...{tail_preview}"
+        )
 
     # Generate unique filename
     ts = int(time.time())

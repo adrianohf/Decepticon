@@ -1,7 +1,7 @@
 """bash_output / bash_kill / bash_status tool unit tests."""
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from decepticon.backends.docker_sandbox import BackgroundJobTracker
 from decepticon.tools.bash.bash import (
@@ -89,7 +89,8 @@ def test_bash_status_lists_running_and_done_jobs():
 def test_bash_status_empty_returns_empty_marker():
     sandbox = _fake_sandbox()
     set_sandbox(sandbox)
-    result = asyncio.run(bash_status.ainvoke({}))
+    with bash_workspace("/workspace/test"):
+        result = asyncio.run(bash_status.ainvoke({}))
     assert "[EMPTY]" in result
 
 
@@ -116,3 +117,40 @@ def test_bash_background_uses_engagement_workspace_context():
         workspace_path="/workspace/test",
     )
     assert "[BACKGROUND]" in result
+
+
+def test_bash_uses_engagement_workspace_from_environment(monkeypatch):
+    sandbox = _fake_sandbox()
+    sandbox.execute = MagicMock()
+    sandbox.execute_tmux_async = AsyncMock(return_value="ok")
+    set_sandbox(sandbox)
+    monkeypatch.setenv("DECEPTICON_ENGAGEMENT", "env-engagement")
+
+    result = asyncio.run(bash.ainvoke({"command": "pwd"}))
+
+    sandbox.execute_tmux_async.assert_called_once_with(
+        command="pwd",
+        session="main",
+        timeout=120,
+        is_input=False,
+        workspace_path="/workspace/env-engagement",
+    )
+    assert result == "ok"
+
+
+def test_large_output_without_engagement_workspace_does_not_create_root_scratch():
+    sandbox = _fake_sandbox()
+    sandbox.execute = MagicMock()
+    sandbox.execute_tmux_async = AsyncMock(return_value="x" * 15_001)
+    set_sandbox(sandbox)
+
+    result = asyncio.run(
+        bash.ainvoke(
+            {"command": "big"},
+            config={"configurable": {"workspace_path": "/workspace"}},
+        )
+    )
+
+    assert "/workspace/.scratch" not in result
+    assert "not written" in result
+    sandbox.execute.assert_not_called()

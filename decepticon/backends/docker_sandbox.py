@@ -261,7 +261,7 @@ class TmuxSessionManager:
         self._clear_screen()
         time.sleep(0.2)
 
-        if not session_exists:
+        if not session_exists and self._workspace_path != "/workspace":
             log_path = f"{self._workspace_path}/.sessions/{self._log_name}.log"
             try:
                 # Idempotent — the directory is bind-mounted to the host so

@@ -13,19 +13,25 @@ const WORKSPACE_SUBDIRS = ["plan"];
 // from either side surface in the other's picker without quoting/encoding hacks.
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
 
+function isEngagementWorkspaceDir(name: string) {
+  return SLUG_RE.test(name) && !name.startsWith(".");
+}
+
 export async function GET() {
   try {
     const { userId } = await requireAuth();
 
-    const engagements = await prisma.engagement.findMany({
+    const engagements = (await prisma.engagement.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-    });
+    })).filter((eng) => isEngagementWorkspaceDir(eng.name));
 
     // Auto-import workspace dirs created by CLI that are not yet in DB
     try {
       const entries = await fs.readdir(WORKSPACE, { withFileTypes: true });
-      const wsDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      const wsDirs = entries
+        .filter((e) => e.isDirectory() && isEngagementWorkspaceDir(e.name))
+        .map((e) => e.name);
       const knownNames = new Set(engagements.map((e) => e.name));
 
       for (const dir of wsDirs) {

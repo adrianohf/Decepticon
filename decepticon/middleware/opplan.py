@@ -42,6 +42,12 @@ from decepticon.core.schemas import (
     OpsecLevel,
 )
 
+
+def _reduce_engagement_name(current: str | None, update: str | None) -> str | None:
+    """Merge concurrent launcher/tool writes to the stable engagement slug."""
+    return update if update is not None else current
+
+
 # ── State Schema ──────────────────────────────────────────────────────
 
 
@@ -56,7 +62,7 @@ class OPPLANState(AgentState):
     objectives: Annotated[NotRequired[list[dict]], OmitFromInput]
     """List of OPPLAN objectives in dict form (serialized Objective models)."""
 
-    engagement_name: Annotated[NotRequired[str], OmitFromInput]
+    engagement_name: NotRequired[Annotated[str, OmitFromInput, _reduce_engagement_name]]
     """Current engagement name for context."""
 
     threat_profile: Annotated[NotRequired[str], OmitFromInput]

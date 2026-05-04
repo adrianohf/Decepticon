@@ -262,7 +262,7 @@ jobs:
           load: true
           tags: decepticon-${{ matrix.image }}:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=${{ github.event_name == 'push' && 'max' || 'min' }}
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.35.0
         with:

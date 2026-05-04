@@ -207,12 +207,20 @@ func (c *Compose) RunInteractive(profiles []string, service string, env map[stri
 	return nil
 }
 
-// CleanScratch removes /workspace/.scratch inside the running sandbox.
-// Best-effort: silently no-ops when the sandbox is not running so a stale
-// scratch directory can be retired without forcing the user to bring the
-// stack up just for cleanup.
+// CleanScratch removes legacy root-level scratch/session directories inside
+// the running sandbox. Current bash tooling writes these directories under
+// each engagement workspace; this cleanup only retires leftovers from older
+// versions.
 func (c *Compose) CleanScratch() {
-	cmd := exec.Command("docker", "exec", "decepticon-sandbox", "rm", "-rf", "/workspace/.scratch")
+	cmd := exec.Command(
+		"docker",
+		"exec",
+		"decepticon-sandbox",
+		"rm",
+		"-rf",
+		"/workspace/.scratch",
+		"/workspace/.sessions",
+	)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	_ = cmd.Run()

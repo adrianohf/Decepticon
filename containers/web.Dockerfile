@@ -1,8 +1,8 @@
 # ----------------------
-# build-base — Node 22 LTS + native build toolchain.
+# build-base — Node 24 + native build toolchain.
 # Used only by stages that compile native addons (node-pty, sharp).
 # ----------------------
-FROM node:22-slim AS build-base
+FROM node:24-slim AS build-base
 
 WORKDIR /app
 
@@ -55,12 +55,15 @@ WORKDIR /app/clients/web
 RUN npx prisma generate
 RUN npm run build
 
+WORKDIR /app
+RUN npm prune --omit=dev --no-audit --no-fund
+
 # ----------------------
-# runtime — minimal node:22-slim, NO build toolchain.
+# runtime — minimal node:24-slim, NO build toolchain.
 # Native addons compiled in `build` are copied as prebuilt .node binaries;
 # python3/make/g++ are not needed at runtime and would add ~1GB of bloat.
 # ----------------------
-FROM node:22-slim AS runner
+FROM node:24-slim AS runner
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
@@ -91,10 +94,8 @@ COPY --from=build --chown=nextjs:nodejs /app/clients/cli/src ./clients/cli/src
 COPY --from=build --chown=nextjs:nodejs /app/clients/cli/package.json ./clients/cli/package.json
 # Shared streaming library
 COPY --from=build --chown=nextjs:nodejs /app/clients/shared ./clients/shared
-# node_modules carries the compiled native addons (node-pty, sharp) plus
-# tsx for running the terminal server. Production-only installs would drop
-# tsx (devDep), so we keep the full tree but rely on the `runner` stage
-# omitting build tools to keep the image lean.
+# Production workspace dependencies: external Next packages, Prisma CLI,
+# node-pty, sharp, and tsx for the current embedded terminal/CLI bridge.
 COPY --from=build --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 WORKDIR /app/clients/web

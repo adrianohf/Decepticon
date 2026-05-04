@@ -15,12 +15,53 @@ after resume.
 
 from __future__ import annotations
 
+import ast
+import json
 from typing import Annotated, Any
 
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+
+HEADER_MAX_CHARS = 60
+
+
+def _coerce_options_list(value: Any) -> list[Any]:
+    """Normalize common local-model shapes for ``options``."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    if not isinstance(value, str):
+        return []
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(value)
+        except (json.JSONDecodeError, ValueError, SyntaxError, TypeError, MemoryError):
+            continue
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            return [parsed]
+
+    try:
+        cleaned = value.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
+        parsed = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        return [parsed]
+    return []
+
+
+def _truncate_header(value: Any) -> Any:
+    if isinstance(value, str) and len(value) > HEADER_MAX_CHARS:
+        return value[:HEADER_MAX_CHARS]
+    return value
 
 
 class QuestionOption(BaseModel):
@@ -51,13 +92,15 @@ def ask_user_question(
     question: str,
     header: Annotated[
         str,
+        BeforeValidator(_truncate_header),
         Field(
-            max_length=60,
+            max_length=HEADER_MAX_CHARS,
             description="Short label (≤60 chars) shown as the picker's compact chrome label.",
         ),
     ],
     options: Annotated[
         list[QuestionOption],
+        BeforeValidator(_coerce_options_list),
         Field(
             max_length=5,
             description=(
@@ -85,7 +128,7 @@ def ask_user_question(
 
     Args:
         question: The full question text shown to the operator.
-        header: ≤12-char label for the picker chrome.
+        header: ≤60-char label for the picker chrome.
         options: 2–5 entries, each ``{label, description}``.
         multi_select: If True, the operator may pick multiple options and the
             return value is ``list[str]``.
