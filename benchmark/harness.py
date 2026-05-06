@@ -787,7 +787,7 @@ class Harness:
                 content = f.read_text(encoding="utf-8")
                 if flag_pattern.search(content):
                     texts.append(content)
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 pass
 
         return "\n\n".join(texts)
