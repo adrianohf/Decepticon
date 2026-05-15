@@ -63,6 +63,18 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "lm_studio": "LMSTUDIO_API_KEY",  # LM Studio accepts any string; keep
     # symbolic so validate_model_name() lets the route through.
     "zai": "ZAI_API_KEY",
+    # Cerebras Inference — native LiteLLM ``cerebras/`` provider,
+    # OpenAI-compatible at api.cerebras.ai/v1.
+    "cerebras": "CEREBRAS_API_KEY",
+    # Kimi is the user-facing name for the same Moonshot account.
+    "kimi": "MOONSHOT_API_KEY",
+    # Xiaomi MiMo Open Platform — OpenAI-compatible (/v1/chat/completions).
+    # No native LiteLLM provider yet, so routes are registered under the
+    # ``openai/`` provider with an api_base override; this entry lets
+    # operators set ``DECEPTICON_LITELLM_MODELS=xiaomi_mimo/<id>`` and
+    # have validate_model_name() accept it — the actual route is built
+    # by build_model_entry() below.
+    "xiaomi_mimo": "XIAOMI_MIMO_API_KEY",
 }
 
 ALLOWED_DYNAMIC_PROVIDERS = frozenset(
@@ -305,6 +317,18 @@ def build_model_entry(model_name: str) -> dict[str, Any]:
             "api_key": "os.environ/LLAMACPP_API_KEY",
             "api_base": "os.environ/LLAMACPP_API_BASE",
         }
+    elif provider == "xiaomi_mimo":
+        # Xiaomi MiMo Open Platform — OpenAI-compatible
+        # (``/v1/chat/completions``, Bearer auth). No native LiteLLM
+        # provider yet; remap to ``openai/<id>`` and override api_base
+        # to XIAOMI_MIMO_API_BASE (default points at
+        # ``https://platform.xiaomimimo.com/v1``).
+        actual_model = model_name.split("/", 1)[1]
+        params = {
+            "model": f"openai/{actual_model}",
+            "api_key": "os.environ/XIAOMI_MIMO_API_KEY",
+            "api_base": "os.environ/XIAOMI_MIMO_API_BASE",
+        }
     else:
         params = {"model": model_name}
         if provider == "ollama_chat":
@@ -312,7 +336,44 @@ def build_model_entry(model_name: str) -> dict[str, Any]:
             # provider is rejected upstream by validate_model_name so only
             # ``ollama_chat/`` (which routes to /api/chat with tool support)
             # reaches this branch.
-            params["api_base"] = "os.environ/OLLAMA_API_BASE"
+            #
+            # When OLLAMA_API_BASE is unset, LiteLLM's ``os.environ/<NAME>``
+            # syntax resolves to an empty string and the route silently
+            # 404s. Pin to ``http://host.docker.internal:11434`` as the
+            # write-time default — it works on macOS, Linux, and WSL2
+            # (Docker Desktop installs an /etc/hosts alias to the host)
+            # and is exactly what the launcher onboard wizard writes.
+            # Operators who run docker-without-Desktop on a pure Linux
+            # host can override by exporting the env var; the explicit
+            # ``os.environ/OLLAMA_API_BASE`` resolution takes effect when
+            # the env var IS set, because LiteLLM resolves env-refs at
+            # request time.
+            if os.environ.get("OLLAMA_API_BASE", "").strip():
+                params["api_base"] = "os.environ/OLLAMA_API_BASE"
+            else:
+                params["api_base"] = "http://host.docker.internal:11434"
+        elif provider == "ollama_cloud":
+            # Ollama Cloud (https://docs.ollama.com/cloud) — OpenAI-compatible
+            # at ``https://ollama.com/v1`` with Bearer auth via OLLAMA_API_KEY.
+            # No native LiteLLM ``ollama_cloud/`` provider yet, so remap the
+            # route to ``openai/<model>`` with explicit api_base override.
+            # ``OLLAMA_CLOUD_API_BASE`` defaults to ``https://ollama.com/v1``
+            # but can point at a self-hosted Ollama endpoint that mirrors
+            # the cloud OpenAI shape. Same env-empty-fallback pattern as
+            # ``ollama_chat`` above — write a literal default URL when the
+            # operator hasn't pinned the base, so the route doesn't
+            # silently 404 when LiteLLM resolves an empty env-ref.
+            actual_model = model_name.split("/", 1)[1]
+            cloud_base = (
+                "os.environ/OLLAMA_CLOUD_API_BASE"
+                if os.environ.get("OLLAMA_CLOUD_API_BASE", "").strip()
+                else "https://ollama.com/v1"
+            )
+            params = {
+                "model": f"openai/{actual_model}",
+                "api_key": "os.environ/OLLAMA_API_KEY",
+                "api_base": cloud_base,
+            }
         elif provider == "bedrock":
             # AWS Bedrock — uses AWS SigV4 with three env vars rather
             # than an Authorization header. LiteLLM reads them
