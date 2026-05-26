@@ -9,17 +9,37 @@ exercise the real OpenTelemetry SDK without hitting the network.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from typing import Any
+
 import pytest
 
 opentelemetry = pytest.importorskip("opentelemetry")
 
 from opentelemetry import trace  # noqa: E402
 from opentelemetry.sdk.resources import Resource  # noqa: E402
-from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider  # noqa: E402
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: E402
     InMemorySpanExporter,
 )
+
+
+def _attrs(span: ReadableSpan) -> Mapping[str, Any]:
+    """Return ``span.attributes`` after asserting it is populated.
+
+    ``ReadableSpan.attributes`` is ``Optional[Mapping]`` in the SDK type
+    stubs; narrow it once here so the per-attribute asserts below stay
+    readable and basedpyright sees the non-None refinement.
+    """
+    assert span.attributes is not None, f"{span.name} has no attributes"
+    return span.attributes
+
+
+def _parent_span_id(span: ReadableSpan) -> int:
+    assert span.parent is not None, f"{span.name} has no parent"
+    return span.parent.span_id
+
 
 from decepticon.telemetry import otel as otel_module  # noqa: E402
 from decepticon.telemetry.otel import (  # noqa: E402
@@ -40,7 +60,7 @@ trace.set_tracer_provider(_SHARED_PROVIDER)
 
 
 @pytest.fixture
-def memory_exporter(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
+def memory_exporter(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemorySpanExporter]:
     """Reuse the module-level TracerProvider; OTel refuses post-init swaps."""
     monkeypatch.setenv("OTEL_ENABLED", "1")
     _SHARED_EXPORTER.clear()
@@ -82,9 +102,9 @@ def test_engagement_agent_tool_llm_hierarchy(memory_exporter: InMemorySpanExport
     agent = spans["decepticon.agent_run"]
     tool = spans["decepticon.tool_call"]
     llm = spans["decepticon.llm_call"]
-    assert agent.parent.span_id == engagement.context.span_id
-    assert tool.parent.span_id == agent.context.span_id
-    assert llm.parent.span_id == agent.context.span_id
+    assert _parent_span_id(agent) == engagement.context.span_id
+    assert _parent_span_id(tool) == agent.context.span_id
+    assert _parent_span_id(llm) == agent.context.span_id
 
 
 def test_attributes_are_set(memory_exporter: InMemorySpanExporter) -> None:
@@ -101,21 +121,21 @@ def test_attributes_are_set(memory_exporter: InMemorySpanExporter) -> None:
                 reset_current_objective_id(token)
 
     spans = {span.name: span for span in memory_exporter.get_finished_spans()}
-    engagement = spans["decepticon.engagement"]
-    agent = spans["decepticon.agent_run"]
-    tool = spans["decepticon.tool_call"]
-    llm = spans["decepticon.llm_call"]
-    assert engagement.attributes["decepticon.engagement_id"] == "eng-1"
-    assert agent.attributes["decepticon.agent"] == "decepticon"
-    assert agent.attributes["decepticon.engagement_id"] == "eng-1"
-    assert tool.attributes["decepticon.tool"] == "update_objective"
-    assert tool.attributes["decepticon.opplan.objective_id"] == "OBJ-001"
-    assert tool.attributes["decepticon.engagement_id"] == "eng-1"
-    assert llm.attributes["decepticon.llm.model"] == "anthropic/claude-haiku-4-5"
-    assert llm.attributes["decepticon.llm.prompt_tokens"] == 120
-    assert llm.attributes["decepticon.llm.completion_tokens"] == 45
-    assert llm.attributes["decepticon.llm.cost_usd"] == pytest.approx(0.123456)
-    assert llm.attributes["decepticon.opplan.objective_id"] == "OBJ-001"
+    engagement = _attrs(spans["decepticon.engagement"])
+    agent = _attrs(spans["decepticon.agent_run"])
+    tool = _attrs(spans["decepticon.tool_call"])
+    llm = _attrs(spans["decepticon.llm_call"])
+    assert engagement["decepticon.engagement_id"] == "eng-1"
+    assert agent["decepticon.agent"] == "decepticon"
+    assert agent["decepticon.engagement_id"] == "eng-1"
+    assert tool["decepticon.tool"] == "update_objective"
+    assert tool["decepticon.opplan.objective_id"] == "OBJ-001"
+    assert tool["decepticon.engagement_id"] == "eng-1"
+    assert llm["decepticon.llm.model"] == "anthropic/claude-haiku-4-5"
+    assert llm["decepticon.llm.prompt_tokens"] == 120
+    assert llm["decepticon.llm.completion_tokens"] == 45
+    assert llm["decepticon.llm.cost_usd"] == pytest.approx(0.123456)
+    assert llm["decepticon.opplan.objective_id"] == "OBJ-001"
 
 
 def test_record_llm_cost_falls_back_to_engagement_span(
@@ -124,7 +144,7 @@ def test_record_llm_cost_falls_back_to_engagement_span(
     with start_engagement_span("eng-2"):
         record_llm_cost(2.5)
     eng = next(s for s in memory_exporter.get_finished_spans() if s.name == "decepticon.engagement")
-    assert eng.attributes["decepticon.llm.cost_usd"] == pytest.approx(2.5)
+    assert _attrs(eng)["decepticon.llm.cost_usd"] == pytest.approx(2.5)
 
 
 def test_record_llm_cost_ignores_none(memory_exporter: InMemorySpanExporter) -> None:
@@ -132,7 +152,7 @@ def test_record_llm_cost_ignores_none(memory_exporter: InMemorySpanExporter) -> 
         with start_llm_span("model-x"):
             record_llm_cost(None)
     llm = next(s for s in memory_exporter.get_finished_spans() if s.name == "decepticon.llm_call")
-    assert "decepticon.llm.cost_usd" not in llm.attributes
+    assert "decepticon.llm.cost_usd" not in _attrs(llm)
 
 
 def test_set_current_objective_id_returns_none_when_disabled(
