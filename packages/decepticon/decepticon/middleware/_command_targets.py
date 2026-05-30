@@ -60,10 +60,15 @@ _HOSTNAME_AFTER_VERB_RE = re.compile(
 )
 
 
-# Final labels that mark a token as a local file argument, never a network
-# target. No public DNS TLD collides with any of these, so excluding them is
-# safe and prevents RoE ENFORCE mode from refusing legitimate commands whose
-# option values (``-i key.pem``, ``-oA scan.txt``) look hostname-shaped.
+# Final labels that mark a token as a local-file argument, never a network
+# target, so RoE ENFORCE mode does not refuse legitimate commands whose option
+# values (``-i key.pem``, ``-oA scan.txt``) look hostname-shaped.
+#
+# SECURITY: an entry here is only safe if it is NOT also a delegated DNS TLD.
+# Real TLDs (``.sh`` ``.md`` ``.py`` ``.pl`` ``.pub`` ``.zip`` …) were removed:
+# leaving them in silently dropped genuine hosts such as ``evil.zip`` from RoE
+# scope enforcement. Over-extracting a spurious target (operator-overridable)
+# is safer than dropping a real one.
 _NON_TARGET_EXTENSIONS: frozenset[str] = frozenset(
     {
         "pem",
@@ -74,7 +79,6 @@ _NON_TARGET_EXTENSIONS: frozenset[str] = frozenset(
         "der",
         "p12",
         "pfx",
-        "pub",
         "txt",
         "log",
         "json",
@@ -89,12 +93,8 @@ _NON_TARGET_EXTENSIONS: frozenset[str] = frozenset(
         "xml",
         "html",
         "htm",
-        "md",
         "rst",
-        "sh",
-        "py",
         "rb",
-        "pl",
         "ps1",
         "bat",
         "pcap",
@@ -108,7 +108,6 @@ _NON_TARGET_EXTENSIONS: frozenset[str] = frozenset(
         "sqlite",
         "sqlite3",
         "gz",
-        "zip",
         "tar",
         "tgz",
         "7z",

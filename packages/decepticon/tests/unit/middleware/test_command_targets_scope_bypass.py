@@ -54,3 +54,17 @@ def test_plain_ipv4_target_still_extracted_regression():
 
 def test_cidr_target_preserved_regression():
     assert "10.0.0.0/24" in extract_targets("nmap -sn 10.0.0.0/24")
+
+
+def test_tld_colliding_hosts_not_dropped_by_extension_denylist():
+    assert extract_targets("curl https://evil.zip/") == {"evil.zip"}
+    assert extract_targets("curl https://target.sh/") == {"target.sh"}
+    assert extract_targets("curl https://pay.md/") == {"pay.md"}
+    assert extract_targets("curl https://exploit.py/") == {"exploit.py"}
+    assert extract_targets("curl https://domain.pl/") == {"domain.pl"}
+    assert extract_targets("curl https://docs.pub/") == {"docs.pub"}
+
+
+def test_genuine_local_file_argument_still_excluded():
+    assert extract_targets("nmap -oA key.pem 10.0.0.1") == {"10.0.0.1"}
+    assert extract_targets("nmap -oA scan.txt 10.0.0.1") == {"10.0.0.1"}
