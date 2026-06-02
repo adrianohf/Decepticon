@@ -3,28 +3,33 @@ skillogy service (Neo4j-backed). Replaces the file-system-backed
 SkillsMiddleware in agents wired with ``DECEPTICON_SKILL_BACKEND=
 skillogy_brain``.
 
-Agent tool surface (Phase 1a, four tools)
------------------------------------------
-- ``load_skill(name_or_path)`` — fetch the full body + frontmatter of
-  one ``:Skill`` node. Accepts either a unique ``name`` or the
-  canonical ``/skills/.../SKILL.md`` path.
+Agent tool surface (Phase 1a, three tools — see Amendment v0.2.2)
+-----------------------------------------------------------------
 - ``find_skill(query?, subdomain?, mitre_id?, tag?, tactic_id?,
   limit=20)`` — relationship-aware discovery. AND-combined filters.
   Returns each match's name, path, subdomain, description, plus the
   matched MITRE IDs and tags so the agent sees *why* the skill came
   back.
+- ``load_skill(name_or_path)`` — fetch the full body + frontmatter of
+  one ``:Skill`` node. Accepts either a unique ``name`` or the
+  canonical ``/skills/.../SKILL.md`` path.
 - ``traverse(from_path, edge_types?, depth=2)`` — explicit graph
   walking from a Skill seed along a whitelisted edge set.
-- ``run_cypher_read(query, params?)`` — read-only Cypher escape hatch.
-  Server enforces ``default_access_mode=READ`` + a write-keyword
-  denylist (CREATE, MERGE, SET, DELETE, …).
+
+``run_cypher_read`` was removed from the agent surface in v0.2.2 — its
+purpose (associative navigation) is fully covered by ``find_skill``
+AND-combining over the five edge types and ``traverse`` doing
+variable-length BFS. ``Neo4jBackend.run_cypher_read`` and its
+read-only enforcement layers are kept in the server backend for
+internal diagnostics, Phase 1b's ``recall()`` implementation, and test
+fixtures — they are simply not exposed as an agent tool.
 
 Transitional architecture note
 ------------------------------
 Phase 1a service-architecture pivot (spec v0.2.1) says this middleware
 should be a *thin REST/gRPC client* of the standalone skillogy
 container, not own a Bolt connection of its own. This first cut wires
-a direct ``Neo4jBackend`` to deliver the four tools end-to-end against
+a direct ``Neo4jBackend`` to deliver the three tools end-to-end against
 the live graph; a follow-on PR within Phase 1a swaps it for
 ``RestSkillogyClient`` once the REST endpoints are rewritten on top of
 ``Neo4jBackend``. The tool surface seen by the agent is identical
@@ -51,21 +56,17 @@ _DEFAULT_NEO4J_USER = "neo4j"
 _DEFAULT_NEO4J_PASSWORD = "decepticon-graph"  # nosec B105 — local-dev default; production overrides via env
 _POLICY_PROMPT = (
     "\n\n[Skillogy access]\n"
-    "Skills live in a Neo4j knowledge graph. You have four tools:\n"
-    "- ``load_skill(name_or_path)`` — fetch one SKILL.md body. Accept either a unique\n"
-    "  name (e.g. 'kerberoasting') or the canonical /skills/.../SKILL.md path.\n"
+    "Skills live in a Neo4j knowledge graph. You have three tools:\n"
     "- ``find_skill(query?, subdomain?, mitre_id?, tag?, tactic_id?, limit=20)`` —\n"
     "  relationship-aware discovery. Filters AND-combine. Returns each hit's name,\n"
     "  path, subdomain, description, matched_mitre, matched_tags so you see why it matched.\n"
+    "- ``load_skill(name_or_path)`` — fetch one SKILL.md body. Accept either a unique\n"
+    "  name (e.g. 'kerberoasting') or the canonical /skills/.../SKILL.md path.\n"
     "- ``traverse(from_path, edge_types?, depth=2)`` — variable-length BFS from a Skill\n"
     "  seed along the relationship whitelist (IN_PHASE, IMPLEMENTS, TAGGED, BELONGS_TO,\n"
     "  RELATED_TO, HAS_TECHNIQUE, HAS_SUBTECHNIQUE).\n"
-    "- ``run_cypher_read(query, params?)`` — read-only Cypher escape hatch when the\n"
-    "  curated tools don't fit. Write-mode keywords (CREATE/MERGE/SET/DELETE/…) are\n"
-    "  refused server-side.\n"
     "Workflow: prefer find_skill to narrow candidates, then load_skill on the chosen\n"
-    "match. Use traverse for 'what relates to this' questions and run_cypher_read for\n"
-    "anything more bespoke.\n"
+    "match. Use traverse for 'what relates to this' questions.\n"
 )
 
 
@@ -191,26 +192,6 @@ def _make_traverse_tool(backend):
     return traverse
 
 
-def _make_run_cypher_read_tool(backend):
-    @tool
-    def run_cypher_read(query: str, params: dict[str, Any] | None = None) -> str:
-        """Read-only Cypher escape hatch.
-
-        Use this only when the curated tools (``load_skill``, ``find_skill``,
-        ``traverse``) cannot express the question. Server enforces
-        ``default_access_mode='READ'`` on the Bolt session and applies a
-        write-keyword denylist before the query reaches Neo4j. Rows are
-        capped server-side.
-        """
-        try:
-            rows = backend.run_cypher_read(query, params or {})
-            return json.dumps({"count": len(rows), "rows": rows}, ensure_ascii=False, default=str)
-        except Exception as exc:  # noqa: BLE001
-            return json.dumps({"error": f"run_cypher_read failed: {exc!r}"})
-
-    return run_cypher_read
-
-
 class SkillogyMiddleware(AgentMiddleware):
     """Wire the agent to the skillogy knowledge graph (Neo4j).
 
@@ -229,10 +210,9 @@ class SkillogyMiddleware(AgentMiddleware):
         self._backend = backend or _backend_factory()
         self._append_policy = append_policy_to_system
         self.tools = [
-            _make_load_skill_tool(self._backend),
             _make_find_skill_tool(self._backend),
+            _make_load_skill_tool(self._backend),
             _make_traverse_tool(self._backend),
-            _make_run_cypher_read_tool(self._backend),
         ]
 
     @classmethod
