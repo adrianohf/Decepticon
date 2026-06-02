@@ -72,7 +72,11 @@ function sessionKey(slug: string, agentId: string): string {
 function appendScrollback(session: Session, data: string): void {
   session.scrollback += data;
   if (session.scrollback.length > SCROLLBACK_LIMIT) {
-    session.scrollback = session.scrollback.slice(-SCROLLBACK_LIMIT);
+    const trimmed = session.scrollback.slice(-SCROLLBACK_LIMIT);
+    // Resume at a line boundary so replay never starts mid escape sequence,
+    // which would mis-color or swallow output on the client after term.reset().
+    const nl = trimmed.indexOf("\n");
+    session.scrollback = nl >= 0 && nl < trimmed.length - 1 ? trimmed.slice(nl + 1) : trimmed;
   }
 }
 
@@ -262,8 +266,12 @@ wss.on("connection", async (ws: WebSocket, req) => {
       }
       newSession.ws.close(1000, "PTY exited");
     }
-    // Don't destroy immediately — let reattach see the exit message
-    setTimeout(() => destroySession(key), 5000);
+    // Don't destroy immediately — let reattach see the exit message. Guard on
+    // session identity so a reconnect that respawns a fresh PTY under the same
+    // key within the window isn't killed by this stale timer.
+    setTimeout(() => {
+      if (sessions.get(key) === newSession) destroySession(key);
+    }, 5000);
   });
 
   wireWsToSession(ws, newSession);
@@ -272,8 +280,6 @@ wss.on("connection", async (ws: WebSocket, req) => {
 // ── Wire a WebSocket to a Session ────────────────────────────────
 
 function wireWsToSession(ws: WebSocket, session: Session): void {
-  // Send initial resize
-
   ws.on("message", (raw: Buffer | string) => {
     const msg = raw.toString();
     try {
