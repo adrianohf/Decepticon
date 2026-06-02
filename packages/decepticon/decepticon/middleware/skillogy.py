@@ -24,16 +24,15 @@ read-only enforcement layers are kept in the server backend for
 internal diagnostics, Phase 1b's ``recall()`` implementation, and test
 fixtures — they are simply not exposed as an agent tool.
 
-Transitional architecture note
-------------------------------
-Phase 1a service-architecture pivot (spec v0.2.1) says this middleware
-should be a *thin REST/gRPC client* of the standalone skillogy
-container, not own a Bolt connection of its own. This first cut wires
-a direct ``Neo4jBackend`` to deliver the three tools end-to-end against
-the live graph; a follow-on PR within Phase 1a swaps it for
-``RestSkillogyClient`` once the REST endpoints are rewritten on top of
-``Neo4jBackend``. The tool surface seen by the agent is identical
-either way.
+Architecture
+------------
+Phase 1a v0.2.1 service-architecture pivot, completed in Amendment
+v0.2.2: this middleware is a *thin REST client* of the standalone
+skillogy container. The agent process holds no Neo4j Bolt connection
+of its own and the langgraph image carries no ``neo4j`` driver
+dependency. ``RestSkillogyClient`` mirrors ``Neo4jBackend``'s method
+surface so unit tests can swap the implementation behind the same
+duck-typed contract.
 """
 
 from __future__ import annotations
@@ -51,9 +50,7 @@ from typing_extensions import override
 log = logging.getLogger(__name__)
 
 
-_DEFAULT_NEO4J_URI = "bolt://neo4j:7687"
-_DEFAULT_NEO4J_USER = "neo4j"
-_DEFAULT_NEO4J_PASSWORD = "decepticon-graph"  # nosec B105 — local-dev default; production overrides via env
+_DEFAULT_SKILLOGY_URL = "http://skillogy:9100"
 
 # Static graph schema + 3-tool usage policy. This block is identical for
 # every agent — the per-agent phase context is rendered separately by
@@ -125,16 +122,12 @@ _PHASE_FOR_ROLE: dict[str, str] = {
 }
 
 
-def _resolve_neo4j_uri() -> str:
-    return os.environ.get("DECEPTICON_SKILLOGY_NEO4J_URI", _DEFAULT_NEO4J_URI)
+def _resolve_skillogy_url() -> str:
+    return os.environ.get("DECEPTICON_SKILLOGY_URL", _DEFAULT_SKILLOGY_URL)
 
 
-def _resolve_neo4j_user() -> str:
-    return os.environ.get("DECEPTICON_SKILLOGY_NEO4J_USER", _DEFAULT_NEO4J_USER)
-
-
-def _resolve_neo4j_password() -> str:
-    return os.environ.get("DECEPTICON_SKILLOGY_NEO4J_PASSWORD", _DEFAULT_NEO4J_PASSWORD)
+def _resolve_skillogy_api_key() -> str | None:
+    return os.environ.get("DECEPTICON_SKILLOGY_API_KEY") or None
 
 
 def _is_enabled() -> bool:
@@ -144,12 +137,20 @@ def _is_enabled() -> bool:
 
 
 def _backend_factory():
-    from decepticon.skillogy.server.neo4j_backend import Neo4jBackend  # noqa: PLC0415
+    """Build the default REST client used when the middleware is
+    activated without an explicit ``backend=`` injection.
 
-    return Neo4jBackend(
-        uri=_resolve_neo4j_uri(),
-        user=_resolve_neo4j_user(),
-        password=_resolve_neo4j_password(),
+    Phase 1a v0.2.1 service-architecture pivot: the agent process talks
+    to the standalone skillogy container over REST and does not import
+    the neo4j driver. The client mirrors the ``Neo4jBackend`` surface
+    so unit tests can swap in either implementation behind the same
+    duck-typed contract.
+    """
+    from decepticon.skillogy.client.rest import RestSkillogyClient  # noqa: PLC0415
+
+    return RestSkillogyClient(
+        base_url=_resolve_skillogy_url(),
+        api_key=_resolve_skillogy_api_key(),
     )
 
 

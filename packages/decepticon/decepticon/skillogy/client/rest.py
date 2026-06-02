@@ -1,60 +1,45 @@
-"""REST client for the Skillogy service.
+"""REST client for the Phase 1a Skillogy service (Amendment v0.2.2).
 
-httpx-based; sync + async. The middleware uses the async path so it
-doesn't block the agent event loop.
+Mirrors the ``Neo4jBackend`` surface exactly — same method names, same
+keyword signatures, same return shapes — so ``SkillogyMiddleware``'s
+tool wrappers don't care whether they're talking to a local backend
+(unit tests) or the standalone container (production). The middleware
+holds one instance per agent process.
+
+httpx-based, **synchronous**. The tool wrappers (``find_skill``,
+``load_skill``, ``traverse``) are themselves sync ``@tool`` closures
+and the per-phase MoC summary is rendered once at middleware boot, so
+there is no reason to pay the async overhead.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
-
-from decepticon.skillogy.proto import (
-    SkillEnvelope,
-    SkillIngestResponse,
-    SkillListResponse,
-    SkillMeta,
-)
 
 log = logging.getLogger(__name__)
 
 
 class SkillogyClientError(RuntimeError):
-    """Raised on any non-2xx response from the Skillogy server."""
-
-
-def _meta_from_dict(d: dict) -> SkillMeta:
-    return SkillMeta(
-        name=d.get("name") or "",
-        description=d.get("description") or "",
-        subdomain=d.get("subdomain") or "",
-        tags=list(d.get("tags") or []),
-        mitre_attack=list(d.get("mitre_attack") or []),
-        path=d.get("path") or "",
-        content_sha256=d.get("content_sha256") or "",
-        size_bytes=int(d.get("size_bytes") or 0),
-        safety_critical=bool(d.get("safety_critical", False)),
-        gated_by_conops=str(d.get("gated_by_conops") or ""),
-    )
-
-
-def _envelope_from_dict(d: dict) -> SkillEnvelope:
-    return SkillEnvelope(
-        meta=_meta_from_dict(d.get("meta") or {}),
-        body=d.get("body") or "",
-        references={
-            k: (v.encode("utf-8") if isinstance(v, str) else v)
-            for k, v in (d.get("references") or {}).items()
-        },
-        scripts={
-            k: (v.encode("utf-8") if isinstance(v, str) else v)
-            for k, v in (d.get("scripts") or {}).items()
-        },
-    )
+    """Raised on transport failures or non-2xx responses from the server."""
 
 
 class RestSkillogyClient:
-    """Thin async REST client. One per agent process; shares an httpx session."""
+    """Thin sync REST client. Drop-in replacement for ``Neo4jBackend``.
+
+    The wire surface matches ``server/app.py``'s five endpoints:
+
+      GET  /v1/health             → ``health()``
+      POST /v1/skills:find        → ``find_skill(...)``
+      POST /v1/skills:load        → ``load_skill(path)``
+      POST /v1/skills:traverse    → ``traverse(...)``
+      POST /v1/skills:moc         → ``query_moc_summary(...)``
+
+    Reuses a single ``httpx.Client`` for the process lifetime so the
+    connection pool stays warm across the agent's many sequential
+    lookups.
+    """
 
     def __init__(
         self,
@@ -68,107 +53,114 @@ class RestSkillogyClient:
         self._headers = {"Content-Type": "application/json"}
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
+        self._client: Any = None
 
-    async def _post_json(self, path: str, payload: dict) -> dict:
-        try:
-            import httpx  # noqa: PLC0415
-        except ImportError as exc:
-            raise SkillogyClientError("httpx not installed") from exc
-        url = f"{self._base}{path}"
-        async with httpx.AsyncClient(timeout=self._timeout) as cx:
-            resp = await cx.post(url, json=payload, headers=self._headers)
-            if resp.status_code >= 400:
-                raise SkillogyClientError(
-                    f"POST {path} returned HTTP {resp.status_code}: {resp.text[:500]}"
-                )
-            return resp.json()
+    # ---- transport ----------------------------------------------------
 
-    async def _get_json(self, path: str) -> dict:
-        try:
-            import httpx  # noqa: PLC0415
-        except ImportError as exc:
-            raise SkillogyClientError("httpx not installed") from exc
-        url = f"{self._base}{path}"
-        async with httpx.AsyncClient(timeout=self._timeout) as cx:
-            resp = await cx.get(url, headers=self._headers)
-            if resp.status_code >= 400:
-                raise SkillogyClientError(
-                    f"GET {path} returned HTTP {resp.status_code}: {resp.text[:500]}"
-                )
-            return resp.json()
+    def _http(self):
+        if self._client is None:
+            try:
+                import httpx  # noqa: PLC0415
+            except ImportError as exc:
+                raise SkillogyClientError("httpx not installed") from exc
+            self._client = httpx.Client(timeout=self._timeout, headers=self._headers)
+        return self._client
 
-    async def health(self) -> dict[str, Any]:
-        return await self._get_json("/v1/health")
+    def close(self) -> None:
+        if self._client is not None:
+            try:
+                self._client.close()
+            finally:
+                self._client = None
 
-    async def list_skills(
+    def _post(self, path: str, payload: dict) -> dict[str, Any]:
+        resp = self._http().post(f"{self._base}{path}", json=payload)
+        if resp.status_code == 404:
+            return {"_status": 404, "detail": resp.json().get("detail", "")}
+        if resp.status_code >= 400:
+            raise SkillogyClientError(
+                f"POST {path} returned HTTP {resp.status_code}: {resp.text[:500]}"
+            )
+        return resp.json()
+
+    def _get(self, path: str) -> dict[str, Any]:
+        resp = self._http().get(f"{self._base}{path}")
+        if resp.status_code >= 400:
+            raise SkillogyClientError(
+                f"GET {path} returned HTTP {resp.status_code}: {resp.text[:500]}"
+            )
+        return resp.json()
+
+    # ---- mirrored surface (matches Neo4jBackend) ----------------------
+
+    def health(self) -> dict[str, Any]:
+        return self._get("/v1/health")
+
+    def find_skill(
         self,
         *,
-        subdomain_filter: list[str] | None = None,
-        tag_filter: list[str] | None = None,
-        mitre_filter: list[str] | None = None,
-        include_safety_critical: bool = True,
-        include_gated: bool = True,
-        page_size: int = 200,
-    ) -> SkillListResponse:
-        body = {
-            "subdomain_filter": subdomain_filter or [],
-            "tag_filter": tag_filter or [],
-            "mitre_filter": mitre_filter or [],
-            "include_safety_critical": include_safety_critical,
-            "include_gated": include_gated,
-            "page_size": page_size,
-            "page_token": "",
-        }
-        all_skills: list[SkillMeta] = []
-        total = 0
-        next_token = ""
-        while True:
-            body["page_token"] = next_token
-            data = await self._post_json("/v1/skills:list", body)
-            for s in data.get("skills") or []:
-                all_skills.append(_meta_from_dict(s))
-            total = int(data.get("total_count") or 0)
-            next_token = data.get("next_page_token") or ""
-            if not next_token:
-                break
-        return SkillListResponse(skills=all_skills, next_page_token="", total_count=total)
+        query: str | None = None,
+        subdomain: str | None = None,
+        mitre_id: str | None = None,
+        tag: str | None = None,
+        tactic_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {"limit": limit}
+        if query is not None:
+            payload["query"] = query
+        if subdomain is not None:
+            payload["subdomain"] = subdomain
+        if mitre_id is not None:
+            payload["mitre_id"] = mitre_id
+        if tag is not None:
+            payload["tag"] = tag
+        if tactic_id is not None:
+            payload["tactic_id"] = tactic_id
+        try:
+            data = self._post("/v1/skills:find", payload)
+        except SkillogyClientError as exc:
+            # The 400 "requires at least one of: ..." case maps cleanly
+            # to ValueError so the tool wrappers' existing surfacing
+            # logic does the right thing.
+            if "HTTP 400" in str(exc):
+                raise ValueError(str(exc)) from exc
+            raise
+        return list(data.get("hits") or [])
 
-    async def load_skill(
-        self, path: str, *, include_references: bool = True, include_scripts: bool = True
-    ) -> SkillEnvelope:
-        data = await self._post_json(
-            "/v1/skills:load",
-            {
-                "path": path,
-                "include_references": include_references,
-                "include_scripts": include_scripts,
-            },
-        )
-        return _envelope_from_dict(data.get("skill") or {})
+    def load_skill(self, path: str) -> dict[str, Any] | None:
+        data = self._post("/v1/skills:load", {"name_or_path": path})
+        if data.get("_status") == 404:
+            return None
+        return dict(data.get("props") or {})
 
-    async def ingest_skill(
+    def traverse(
         self,
-        *,
-        path: str,
-        body: str,
-        references: dict[str, bytes] | None = None,
-        scripts: dict[str, bytes] | None = None,
-    ) -> SkillIngestResponse:
-        data = await self._post_json(
-            "/v1/skills:ingest",
-            {
-                "path": path,
-                "body": body,
-                "references": {
-                    k: v.decode("utf-8", errors="replace") for k, v in (references or {}).items()
-                },
-                "scripts": {
-                    k: v.decode("utf-8", errors="replace") for k, v in (scripts or {}).items()
-                },
-            },
-        )
-        return SkillIngestResponse(
-            path=str(data.get("path") or ""),
-            content_sha256=str(data.get("content_sha256") or ""),
-            created=bool(data.get("created", False)),
-        )
+        from_path: str,
+        edge_types: list[str] | None = None,
+        depth: int = 2,
+    ) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {"from_path": from_path, "depth": depth}
+        if edge_types is not None:
+            payload["edge_types"] = edge_types
+        data = self._post("/v1/skills:traverse", payload)
+        return list(data.get("rows") or [])
+
+    def query_moc_summary(self, phase: str, *, limit: int = 25) -> list[dict[str, Any]]:
+        data = self._post("/v1/skills:moc", {"phase": phase, "limit": limit})
+        return list(data.get("mocs") or [])
+
+
+# ── factory helper used by SkillogyMiddleware ─────────────────────────
+
+
+def from_env() -> RestSkillogyClient:
+    """Build a client from ``DECEPTICON_SKILLOGY_URL`` + optional bearer.
+
+    Defaults to ``http://skillogy:9100`` (the compose hostname). The
+    middleware calls this when no explicit client is injected.
+    """
+    return RestSkillogyClient(
+        base_url=os.environ.get("DECEPTICON_SKILLOGY_URL", "http://skillogy:9100"),
+        api_key=os.environ.get("DECEPTICON_SKILLOGY_API_KEY") or None,
+    )
