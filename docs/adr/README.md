@@ -65,5 +65,6 @@ Use [`template.md`](template.md) as the starting point.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-pr-tiering-and-blast-radius.md) | PR tiering by blast radius | Accepted |
 | [0003](0003-ai-contributor-self-review.md) | AI-assisted contribution self-review charter | Accepted |
+| [0004](0004-zero-ai-slop-policy.md) | Zero AI-slop policy — the 100% quality bar | Accepted |
 
 Keep this index in sync when you land a new ADR.

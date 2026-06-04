@@ -16,6 +16,18 @@ solve, in miniature.
 
 The rules below are not aspirational. They are conditions of merge.
 
+> **Read [`docs/QUALITY_BAR.md`](docs/QUALITY_BAR.md) before your first
+> contribution.** That document is the closed contract on what "100%
+> quality" means for Decepticon — the Karpathy four, the diff-size
+> budget, the banned patterns, the AI-slop signature catalog, and the
+> self-review standard. This charter is the **process** half; the
+> quality bar is the **code** half. Both apply. See [ADR-0004](docs/adr/0004-zero-ai-slop-policy.md)
+> for the rationale.
+>
+> There is no "AI-slop tax." Tool-assisted contributions are held to
+> exactly the same bar as hand-written ones. If you cannot meet it,
+> close the PR.
+
 ---
 
 ## 1. The hard rules
@@ -53,6 +65,43 @@ without review, regardless of how green CI is.
    - You did not relax `cap_drop` / `no-new-privileges` / `mem_limit`
      / `pids_limit` / network membership in `docker-compose.yml`
      without an ADR.
+6. **Your runtime-code diff fits in the budget.** ≤ 400 lines of
+   runtime code (excluding `docs/**`, `tests/**`, `.github/**`,
+   `.semgrep/**`, and pure boilerplate), ≤ 10 files, **1 logical
+   concern** per PR. Doesn't fit? Split it. Exceeding requires a
+   `large-diff-approved` label from `@PurpleCHOIms`, requested in the
+   PR body — not assumed.
+7. **No banned pattern from [QUALITY_BAR §Banned patterns](docs/QUALITY_BAR.md#banned-patterns--pr-closed-on-sight)
+   appears in your diff.** This includes (non-exhaustive):
+   `except Exception: pass`, bare `except:`, bare `# type: ignore` /
+   `# pyright: ignore` / `# noqa` (no rule code), `_ = call()`,
+   `print(` for logging in production code, mutable defaults,
+   wildcard imports, `TODO` without an issue link, `raise NotImplementedError`
+   in a delivered feature, `pytest.mark.skip` / `xfail` without a
+   linked issue, mocked-system-under-test tests, vague test names
+   (`test_works`, `test_happy_path`), `# pragma: no cover` to chase
+   a coverage number. Reviewers stop reading at the first hit.
+8. **No AI-slop signature from [QUALITY_BAR §AI-slop signatures](docs/QUALITY_BAR.md#ai-slop-signatures)
+   survives in your diff.** Strip the defensive `if x is not None:`
+   chains the types already prove. Inline the helper called once.
+   Delete the speculative `**kwargs`. Rename `data` / `result` /
+   `item` to the thing they actually are. Delete docstrings that
+   restate the signature. Delete em-dash salad. Delete the phrase
+   "leverages X to robustly handle Y." Editing AI output is the work
+   the bar exists to demand.
+9. **No drive-by formatting, renaming, or reordering.** If your
+   editor reformatted a file your change did not need, revert it.
+   If you "improved" an adjacent comment, revert it. Surgical means
+   surgical — every changed line traces directly to the stated intent.
+10. **You watched every new/changed test fail before your change made
+    it pass.** Tests that pass without exercising the new path are
+    not tests; they are decoration. For bug fixes, the failing-then-
+    passing sequence is visible in the branch's commit history (do
+    not squash locally — CI squashes on merge).
+11. **Every public function you added or changed has explicit type
+    annotations including the return type, and every exception you
+    raise is a named class.** `raise Exception("…")` is closed on
+    sight; raise a domain-specific subclass.
 
 If any of the above hits, stop. Open an issue or draft ADR first.
 
