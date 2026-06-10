@@ -409,7 +409,9 @@ class Harness:
     def _ensure_services_healthy(self) -> None:
         """Check LangGraph and LiteLLM are reachable with models loaded."""
         if shutil.which("docker") is None:
-            log.warning("harness.services: docker not found on PATH — skipping service health check and restart logic")
+            log.warning(
+                "harness.services: docker not found on PATH — skipping service health check and restart logic"
+            )
             return
         # Check LiteLLM: verify models are loaded via /v1/models endpoint
         litellm_url = self.config.litellm_url
