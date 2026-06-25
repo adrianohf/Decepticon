@@ -60,6 +60,7 @@ from decepticon.middleware.opscontrol_notifications import (
 from decepticon.middleware.prompt_injection_shield import PromptInjectionShieldMiddleware
 from decepticon.middleware.proxy_key_override import ProxyKeyOverrideMiddleware
 from decepticon.middleware.roe import build_default_sink
+from decepticon.middleware.subagent_transcript_state import SubagentTranscriptState
 
 # Slot enum + per-role applicability mapping + safety-critical set
 # all live in the contract layer now (decepticon_core.contracts.slots).
@@ -164,7 +165,18 @@ def _make_filesystem(*, backend: Any, **_: Any):
 
 
 def _make_subagent(*, backend: Any, subagents: list | None = None, **_: Any):
-    return SubAgentMiddleware(backend=backend, subagents=subagents or [])
+    m = SubAgentMiddleware(backend=backend, subagents=subagents or [])
+    # Register the durable sub-agent transcript channel on the ORCHESTRATOR
+    # state. ``AgentMiddleware.state_schema`` is the per-instance schema that
+    # ``create_agent`` auto-merges into the compiled graph state at build time.
+    # SubAgentMiddleware doesn't override it (it inherits AgentState), so we set
+    # it here to SubagentTranscriptState — which EXTENDS AgentState, preserving
+    # deepagents' own channels (messages / jump_to / structured_response) while
+    # adding ``subagent_transcripts`` with its accumulating reducer. Without
+    # this, the key StreamingRunnable returns would be forwarded by task() but
+    # have no declared channel to land in, and the checkpoint would drop it.
+    m.state_schema = SubagentTranscriptState
+    return m
 
 
 def _make_opplan(*, backend: Any, **_: Any):
